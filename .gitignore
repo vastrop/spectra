@@ -1,0 +1,55 @@
+# spectra database (db/spectra_db.py is tracked; the data file is not)
+db/spectra.db*
+
+# spectral-autofocus run folders (frames + per-run plot/CSV)
+focus_runs/
+
+# generated poster PNGs (db browser output). The sample poster is tracked --
+# the README embeds it -- so exclude the directory's contents, not the file.
+/posters/*
+!/posters/spectra_poster.png
+
+# livestack autosave sessions (livestack.fit per stack; deliberately NOT in the
+# watched capture folder, which is often cloud-synced)
+livestack/
+
+# observation data & bulky artifacts
+data_*/
+backup/
+capture/
+cornercheck/
+Focus_test/
+old_data/
+*.fit
+*.fits
+*.gif
+
+# local working notes & one-off analysis outputs (deliberately untracked)
+AGENTS.md
+notesreport.md
+initial_release.md
+focus_analysis.csv
+focus_analysis.png
+blob_centroids_*.png
+assets/*.exe
+assets/*.winmd
+
+# local configuration. Anchored: reference/spectrum_config.json is the tracked
+# example, and an unanchored rule would exclude it from a fresh clone.
+/spectrum_config.json
+/observer.json
+
+# scheduler outbox written by the catalogue browsers
+scheduler_targets.txt
+
+# tooling / caches
+__pycache__/
+.venv/
+venv/
+.idea/
+.claude/*
+!.claude/agents/
+
+# PyInstaller outputs (spectrum_explorer.spec is tracked; its outputs are not)
+build/
+dist/

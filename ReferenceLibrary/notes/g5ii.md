@@ -1,0 +1,22 @@
+# G5II — G5 bright giant
+
+## Class: G stars
+G-type stars have surface temperatures (Teff) of roughly 5300-6000 K on the main-sequence scale (giants and supergiants of the same subtype run cooler), straddling the Sun's own type (G2V), and appear yellow-white to yellow. Their optical spectra are dominated by the deep Ca II H & K resonance lines (3933/3968 Å) and the CH G-band (~4300 Å) — the Fraunhofer G band, a conspicuous CH feature through G and into K, and the single most class-defining feature here (the letter is Fraunhofer's, and is unrelated to the spectral-class letter G). The Balmer lines (Hα, Hβ, Hγ) are moderate, continuing the weakening trend from F stars and fading further toward K. Numerous neutral-metal lines (Fe I, Ca I 4226 Å) and the Mg b triplet (~5167-5184 Å) strengthen through the sequence, and the Na D doublet (5890/5896 Å) grows noticeably from G0 to G8 as the star cools and line blanketing increases.
+
+## This type: G5, luminosity class II (bright giant)
+Intermediate in gravity between a normal giant (III) and a supergiant (I), a G5II shows line widths and the Sr II/Ba II enhancement at a level between those two classes — narrower and more luminosity-enhanced than G5III, but broader and less enhanced than G5I.
+
+## Features
+| Wavelength (Å) | Feature | Notes |
+|---|---|---|
+| 3933-3968 | Ca II K & H | strong, drives the 4000 Å continuum break |
+| 4077 | Sr II | luminosity-sensitive, moderately enhanced |
+| 4215 | CN band | moderately enhanced relative to dwarfs |
+| 4226 | Ca I | growing |
+| 4300-4315 | CH G band | class-defining, strong at G5 |
+| 4340 | Hγ | weakening relative to G0-G2 |
+| 4554 | Ba II | luminosity-sensitive, moderately enhanced |
+| 4861 | Hβ | weakening |
+| 5167-5184 | Mg b triplet | strong |
+| 5890-5896 | Na D | growing, moderate-to-strong |
+| 6563 | Hα | moderate |

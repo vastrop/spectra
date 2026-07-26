@@ -1,0 +1,17 @@
+# Working set for spectrum_explorer.py and its import graph (Python 3.13).
+# Floors are load-bearing where noted; the rest record a known-good version.
+numpy>=2.2
+pandas>=2.2
+scipy>=1.15
+matplotlib>=3.10
+astropy>=8.0
+photutils>=3.0
+scikit-image>=0.26
+requests>=2.32
+Pillow>=11.0
+auto-stretch>=1.1
+specutils>=2.0       # imports specutils.Spectrum (the 2.0 rename of Spectrum1D)
+astroquery>=0.4.8    # lowercase-column SIMBAD API
+
+# Packaging only (not needed to run from source):
+# pyinstaller>=6.10  # 6.10+ required for Python 3.13
