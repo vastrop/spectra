@@ -1,13 +1,41 @@
 # Spectrum Explorer
 
-Amateur stellar spectroscopy from slitless grating spectra. Point it at a FITS
-frame containing a star's spectrum and it extracts the trace, calibrates the
-wavelength scale, corrects for the instrument response, and estimates a
-black-body temperature — with a catalogue browser, a spectra database and a
-NINA-driven capture loop around the edges.
+The motivation behind this project was being able to use my Star Analyser 100
+seamlessly for low-resolution, full-frame stellar spectroscopy.
 
-Built for a Star Analyser-class transmission grating on a small telescope, but
-nothing in the maths assumes a particular instrument.
+I wanted to sidestep all the tedious issues typically encountered when using a
+grating for slitless spectroscopy, and make the process of collecting stellar
+spectra as easy as clicking on a target.
+
+A typical initial workflow is as simple as: 1) provide an approximate
+dispersion value, 2) go to or load an A-type star, 3) auto-derotate it (and
+fine-tune the derotation if needed), 4) auto-calibrate the non-linear
+dispersion (and fine-tune it if needed), 5) auto-calibrate your response curve
+against an A-star reference — then go explore the skies.
+
+The goodies include:
+
+- auto-derotation, provided the first-order spectrum is oriented to the right
+- auto-calibration of the non-linear dispersion
+- auto-calibration of the instrumental response
+- auto continuum generation
+- point and click a detected star or an arbitrary position, get its spectrum
+- fine tuning of the sky background extraction zones to avoid contamination
+- advanced decontamination techniques on both the sky background and the
+  extracted spectra
+- storing spectra in a documented database
+- mount and focuser control through the NINA Advanced API
+- livestacking of the collected images
+- spectral autofocus on A stars: start in a field, automatically go refocus on
+  the closest A star, return to the field
+- catalogues of interesting objects for slitless low-resolution spectroscopy,
+  with direct go-to
+- ASTAP WCS and SIMBAD name resolution
+- LAMOST low-resolution queries
+- movie creation for dynamic events
+- live capture, prestacked image, and off-line folder stacking
+
+Nothing in the maths assumes a particular instrument.
 
 ![Spectra of stars in Cassiopeia](posters/spectra_poster.png)
 
@@ -88,6 +116,13 @@ Most modules have a `__main__` self-check; `tests/` holds the rest.
 
 This program is a thin layer over other people's work. The maths is
 elementary; the reference data is not, and none of it was produced here.
+
+### The instrument
+
+**Robin Leadbeater**, of [Three Hills Observatory](http://www.threehillsobservatory.co.uk/),
+who designed the Star Analyser and gave invaluable advice along the way. The
+grating is what makes low-resolution spectroscopy reachable for amateurs at
+all; without it there would be nothing here to reduce.
 
 ### Reference spectra
 
