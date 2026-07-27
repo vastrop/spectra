@@ -37,6 +37,7 @@ The goodies include:
 
 Nothing in the maths assumes a particular instrument.
 
+![Example](assets/example.png)
 ![Spectra of stars in Cassiopeia](posters/spectra_poster.png)
 
 ## Requirements
