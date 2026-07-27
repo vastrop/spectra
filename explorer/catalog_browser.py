@@ -17,6 +17,7 @@ import csv
 import os
 import re
 import sys
+import threading
 
 import tkinter as tk
 from tkinter import ttk
@@ -187,6 +188,24 @@ def current_altaz(rows, lat_deg, lon_deg, when=None):
                       [float(r["dec_deg"]) for r in rows], unit="deg")
     aa = coords.transform_to(AltAz(obstime=ref, location=loc))
     return [(float(a), float(z)) for a, z in zip(aa.alt.deg, aa.az.deg)]
+
+
+def warm_coordinates():
+    """Build astropy's AltAz machinery on a background thread, at leisure.
+
+    The first AltAz transform in a process spends ~0.5 s assembling the
+    coordinate transform graph and loading the IERS table. Without this,
+    that cost lands on whichever catalogue browser opens first, and it is
+    spent before the browser's window exists — so it reads as the menu
+    hanging. Pure computation, no Tk state, safe off the main thread.
+    """
+    def run():
+        try:
+            current_altaz([{"ra_deg": "0", "dec_deg": "0"}], 0.0, 0.0)
+        except Exception:
+            pass   # warm-up only — the real call reports its own failure
+
+    threading.Thread(target=run, daemon=True).start()
 
 
 def cell(row, key):

@@ -66,6 +66,7 @@ from response_calibration_dialog import ResponseCalibrationDialog
 from continuum_dialog import ContinuumDialog
 from sequence_generator import SequenceGeneratorDialog
 from lamost_dialog import LamostDialog
+from explorer import catalog_browser
 from explorer.be_star_dialog import BeStarDialog
 from explorer.wr_star_dialog import WRStarDialog
 from explorer.quasar_dialog import QuasarDialog
@@ -5715,5 +5716,8 @@ class SpectrumExplorer(tk.Tk):
 
 
 if __name__ == "__main__":
+    # Runs alongside the UI build, so the first catalogue browser opens as
+    # fast as the later ones.
+    catalog_browser.warm_coordinates()
     app = SpectrumExplorer()
     app.mainloop()
