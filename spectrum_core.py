@@ -3289,6 +3289,8 @@ def plot_reference_lines(ax, lines, dispersion, y_max,
     # the numbers survive the y-limit changes below and stay comparable
     # across calls.  The list is shared by every call drawing on this
     # axis, which is what keeps two separately drawn groups off each other.
+    from matplotlib.transforms import ScaledTranslation
+
     renderer = getattr(ax.figure.canvas, "get_renderer", None)
     renderer = renderer() if renderer is not None else None
     scale = ax.figure.dpi / 72.0
@@ -3297,8 +3299,7 @@ def plot_reference_lines(ax, lines, dispersion, y_max,
     if occupied is None:
         occupied = []
 
-    kept = []          # (text artist, vertical offset as a fraction of the axes)
-    top_frac = 0.0     # highest point any label reaches, same units
+    top_px = 0.0       # highest point any label reaches, above the anchor
     for xpix, label in placed:
         txt = ax.text(xpix, y_max * LABEL_LEVEL, label, rotation=90,
                       va="bottom", ha="center", color=colour,
@@ -3325,25 +3326,27 @@ def plot_reference_lines(ax, lines, dispersion, y_max,
             txt.remove()          # every row taken: the rule stands alone
             continue
         occupied.append((lo_x, hi_x, y0, y1))
-        if ax_h_px > 0:
-            kept.append((txt, y0 / ax_h_px))
-            top_frac = max(top_frac, y1 / ax_h_px)
+        top_px = max(top_px, y1)
+        if y0:
+            # Offset in real pixels off the data anchor, not converted into
+            # data units: callers adjust subplot margins *after* drawing
+            # (the full-spectrum viewer grows this axes by ~10%), and a
+            # data-space offset computed against the old height would drift
+            # by the same proportion — a raised label visibly floating away
+            # from the one it had to clear.
+            txt.set_transform(ax.transData + ScaledTranslation(
+                0.0, y0 / ax.figure.dpi, ax.figure.dpi_scale_trans))
 
-    # Open enough headroom for the tallest label on the highest row, then
-    # move each label onto its row.  Solving anchor + frac*(top - ylo) <=
-    # top for top gives the division; the cap keeps the spectrum itself
-    # from being squeezed away when a stretch is hopelessly crowded.
-    if kept:
+    # Open enough headroom for the tallest label on the highest row.
+    # Solving anchor + frac*(top - ylo) <= top for top gives the division;
+    # the cap keeps the spectrum itself from being squeezed away when a
+    # stretch is hopelessly crowded.  A stale axes height only makes this
+    # generous, never tight, so it needs no such care.
+    if top_px > 0 and ax_h_px > 0:
         ylo, ycur = ax.get_ylim()
-        need = ylo + (LABEL_LEVEL * y_max - ylo) / (1.0 - min(0.7, top_frac))
+        need = ylo + (LABEL_LEVEL * y_max - ylo) / (1.0 - min(0.7, top_px / ax_h_px))
         if ycur < need:
             ax.set_ylim(ylo, need)
-        ylo, ytop = ax.get_ylim()
-        for txt, off_frac in kept:
-            if off_frac:
-                x, _y = txt.get_position()
-                txt.set_position(
-                    (x, y_max * LABEL_LEVEL + (ytop - ylo) * off_frac))
 
 def read_fits_image(path):
     """

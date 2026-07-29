@@ -21,6 +21,7 @@ from matplotlib.figure import Figure                          # noqa: E402
 from spectrum_core import (                                    # noqa: E402
     LABEL_LEVEL,
     LABEL_MAX_LEVELS,
+    LABEL_PAD_PX,
     plot_reference_lines,
 )
 
@@ -50,6 +51,17 @@ def drawn(ax):
     return sorted(t.get_text() for t in ax.texts)
 
 
+def rows(ax):
+    """{label: rendered bottom edge in pixels}.
+
+    Read off the artist, not its data anchor: a raised label carries its
+    offset in the transform so that later margin changes cannot stretch
+    it, which leaves every anchor identical.
+    """
+    r = ax.figure.canvas.get_renderer()
+    return {t.get_text(): t.get_window_extent(r).y0 for t in ax.texts}
+
+
 def main():
     # Well-separated lines all keep their labels, all at one height.
     ax = panel()
@@ -57,6 +69,7 @@ def main():
                          1.0, 1.0, fontsize=10)
     assert drawn(ax) == ["a", "b", "c"], drawn(ax)
     assert {round(t.get_position()[1], 6) for t in ax.texts} == {LABEL_LEVEL}
+    assert len(set(rows(ax).values())) == 1, rows(ax)
 
     # Spacing follows the *measured* label, not a font-size guess: set
     # over one rendered width apart, both stay on the bottom row.
@@ -65,15 +78,29 @@ def main():
     plot_reference_lines(ax, {5000.0: "Hβ 4861", 5000.0 + w * 1.4: "Hγ 4340"},
                          1.0, 1.0, fontsize=10)
     assert drawn(ax) == ["Hβ 4861", "Hγ 4340"], drawn(ax)
-    assert len({round(t.get_position()[1], 6) for t in ax.texts}) == 1
+    assert len(set(rows(ax).values())) == 1, rows(ax)
 
-    # Too close, and the second is raised a row rather than dropped.
+    # Too close, and the second is raised a row rather than dropped —
+    # clearing the first by the pad, not by some larger drifted gap.
     ax = panel()
     plot_reference_lines(ax, {5000.0: "Hβ 4861", 5000.0 + w * 0.3: "Hγ 4340"},
                          1.0, 1.0, fontsize=10)
     assert drawn(ax) == ["Hβ 4861", "Hγ 4340"], drawn(ax)
-    ys = {t.get_text(): t.get_position()[1] for t in ax.texts}
-    assert ys["Hγ 4340"] > ys["Hβ 4861"], ys
+    def raise_gap(ax):
+        r = ax.figure.canvas.get_renderer()
+        box = {t.get_text(): t.get_window_extent(r) for t in ax.texts}
+        return box["Hγ 4340"].y0 - box["Hβ 4861"].y1
+
+    gap = raise_gap(ax)
+    assert 0 <= gap <= 2 * LABEL_PAD_PX, gap
+
+    # And the raise must survive a margin change made after drawing — the
+    # full-spectrum viewer calls subplots_adjust() once the labels are
+    # already down, growing this axes by ~10%.  An offset held in data
+    # units would drift by the same proportion and float the label away
+    # from the one it had to clear.
+    ax.figure.subplots_adjust(top=0.99, bottom=0.01)
+    assert abs(raise_gap(ax) - gap) < 1.0, (raise_gap(ax), gap)
 
     # Rows run out eventually: past LABEL_MAX_LEVELS piled on one spot,
     # the surplus keeps its rule and loses its label.
@@ -90,8 +117,7 @@ def main():
     ax = panel()
     plot_reference_lines(ax, {5000.0: "Hβ 4861", 5000.0 + w * 0.8: "Hγ 4340"},
                          1.0, 1.0, fontsize=10)
-    assert len({round(t.get_position()[1], 6) for t in ax.texts}) == 1, \
-        [t.get_position() for t in ax.texts]
+    assert len(set(rows(ax).values())) == 1, rows(ax)
 
     # A rotated label's x-footprint comes from the font, not the string —
     # its length runs vertically.  Worth pinning, because it is why the
@@ -110,14 +136,14 @@ def main():
                          occupied=slots)
     plot_reference_lines(ax, {5000.0 + w * 0.3: "second"}, 1.0, 1.0,
                          fontsize=10, occupied=slots)
-    ys = {t.get_text(): t.get_position()[1] for t in ax.texts}
+    ys = rows(ax)
     assert ys["second"] > ys["first"], ys
 
     ax = panel()
     plot_reference_lines(ax, {5000.0: "first"}, 1.0, 1.0, fontsize=10)
     plot_reference_lines(ax, {5000.0 + w * 0.3: "second"}, 1.0, 1.0,
                          fontsize=10)
-    ys = {t.get_text(): t.get_position()[1] for t in ax.texts}
+    ys = rows(ax)
     assert ys["second"] == ys["first"], ys
 
     # Headroom tracks label length, so a wordy label is not clipped.

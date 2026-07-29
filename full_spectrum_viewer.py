@@ -592,13 +592,13 @@ class FullSpectrumDialog(tk.Toplevel):
         slots = []
         group_wls = self.parent._draw_reference_line_groups(
             _cal_p, cal_ymax, ax=self.ax,
-            force_linear=True, fontsize=12, occupied=slots,
+            force_linear=True, fontsize=9, occupied=slots,
         )
 
         # Annotation overlay on top, skipping whatever the groups above
         # already marked so a line the user has on both ways is not
         # labelled twice at the same x.
-        self.lines_panel.draw(self.ax, cal_ymax, skip=group_wls, fontsize=12,
+        self.lines_panel.draw(self.ax, cal_ymax, skip=group_wls, fontsize=9,
                               occupied=slots)
 
         # Calibration node markers — driven by the parent's "Show
@@ -817,7 +817,7 @@ class FullSpectrumDialog(tk.Toplevel):
         self.ax.text(
             0.5, 0.5, message,
             ha="center", va="center",
-            color="#e94560", fontsize=12,
+            color="#e94560", fontsize=9,
             transform=self.ax.transAxes,
         )
         self.ax.set_xticks([])
