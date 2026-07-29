@@ -145,6 +145,7 @@ from wavelength import (
     HELIUM_LINES,
     OXYGEN_LINES,
     CARBON_LINES,
+    CALCIUM_LINES,
     ATMOSPHERIC_LINES,
     CARBON_STAR_LINES,
     HERBIG_LINES,
@@ -194,6 +195,7 @@ DEFAULTS = dict(
     PLOT_ATMOSPHERIC_LINES = True,
     PLOT_OXYGEN_LINES      = False,
     PLOT_CARBON_LINES      = False,
+    PLOT_CALCIUM_LINES     = False,
     PLOT_CARBON_STAR_LINES = False,
     PLOT_HERBIG_LINES      = False,
     PLOT_WR_WN_LINES       = False,
@@ -1283,7 +1285,7 @@ class SpectrumExplorer(tk.Tk):
         Build the right pane: viewing / overlay controls.
 
         Holds the reference-line toggles (Balmer, Helium, atmospheric,
-        Oxygen, Carbon, Carbon Star), the calibration-node-marker
+        Oxygen, Carbon, Calcium, Carbon Star), the calibration-node-marker
         toggle, and the View Full Spectrum button.  Everything here is
         cosmetic — toggling these controls cannot change extracted
         spectrum values, only what gets drawn on top of them.
@@ -1335,6 +1337,14 @@ class SpectrumExplorer(tk.Tk):
             value=bool(DEFAULTS["PLOT_CARBON_LINES"]))
         ttk.Checkbutton(parent, text="Plot Carbon lines",
                         variable=self.v_carbon_lines,
+                        command=self._on_ref_lines_toggle).grid(
+            row=row, column=0, sticky="w", pady=1)
+        row += 1
+
+        self.v_calcium_lines = tk.BooleanVar(
+            value=bool(DEFAULTS["PLOT_CALCIUM_LINES"]))
+        ttk.Checkbutton(parent, text="Plot Calcium lines",
+                        variable=self.v_calcium_lines,
                         command=self._on_ref_lines_toggle).grid(
             row=row, column=0, sticky="w", pady=1)
         row += 1
@@ -5449,7 +5459,8 @@ class SpectrumExplorer(tk.Tk):
         except tk.TclError:
             pass
 
-    def _draw_reference_line_groups(self, p, y_max, ax=None, force_linear=False, fontsize=6):
+    def _draw_reference_line_groups(self, p, y_max, ax=None, force_linear=False,
+                                    fontsize=6, occupied=None):
         """
         Draw whichever reference-line groups are currently enabled.
 
@@ -5471,6 +5482,13 @@ class SpectrumExplorer(tk.Tk):
             • the calibrated panel, whose x-axis is already in Å — there the
               caller also passes ``dispersion=1.0`` so lines land at
               xpix = wl.
+        occupied : list or None
+            Shared label-slot list (see ``plot_reference_lines``).  One
+            list is used across all the enabled groups so their labels
+            stagger against each other rather than each group starting
+            from a clear axis.  A caller that draws further lines on the
+            same axes afterwards — the full-spectrum viewer's annotation
+            overlay — passes its own list in and reuses it.
 
         Returns
         -------
@@ -5489,18 +5507,21 @@ class SpectrumExplorer(tk.Tk):
             (self.v_atmospheric_lines, ATMOSPHERIC_LINES, "#80d0ff"),
             (self.v_oxygen_lines,      OXYGEN_LINES,      "#90ee90"),
             (self.v_carbon_lines,      CARBON_LINES,      "#ffb347"),
+            (self.v_calcium_lines,     CALCIUM_LINES,     "#45e0c8"),
             (self.v_carbon_star_lines, CARBON_STAR_LINES, "#ff9de2"),
             (self.v_herbig_lines,      HERBIG_LINES,      "#b98cff"),
             (self.v_wr_wn_lines,       WR_WN_LINES,       "#7ecfff"),
             (self.v_wr_wc_lines,       WR_WC_LINES,       "#ffb870"),
         ]
+        if occupied is None:
+            occupied = []
         drawn = set()
         for var, lines, colour in groups:
             if var.get():
                 plot_reference_lines(
                     ax, lines, p["dispersion"], y_max,
                     poly_coeffs=poly, n_pixels=n_pixels, colour=colour,
-                    fontsize=fontsize,
+                    fontsize=fontsize, occupied=occupied,
                 )
                 drawn.update(lines)
         return drawn

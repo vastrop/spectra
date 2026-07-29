@@ -15,8 +15,16 @@ application.  Two consumers:
      always type the wavelength manually.
 
 All wavelengths are air values in Ångström as commonly tabulated in
-stellar spectroscopy references (NIST ASD for He I; standard Balmer
-series).  Telluric bands are quoted at their conventional band-centre.
+stellar spectroscopy references (NIST ASD for He I, Ca II, Ne III and
+the Balmer series).  Telluric bands are quoted at their conventional
+band-centre; molecular band systems at their band head, which is the
+only edge sharp enough to register a marker against.
+
+Where two lines sit closer than this dispersion can resolve, both keep
+their true wavelengths — a catalogue entry has to be a real transition,
+since the calibration quick-pick anchors a dispersion fit on it — and
+each carries a double label naming its blend partner.  Ca II H + Hε
+(1.6 Å apart) and He I + Hζ/H8 (0.4 Å) are the two such pairs.
 Wolf-Rayet C III/C IV blends are tagged as such; the wavelength is the
 conventional blend centroid used for ID, not a single transition.
 
@@ -30,16 +38,29 @@ SPECTRAL_LINES = {
     "Balmer": {
         "colour": "#ff6060",
         "lines": [
-            (3970.1, "Hε 3970", True),
+            # Hε is blended with Ca II H 3968.5 — 1.6 Å apart, far below what
+            # this dispersion resolves.  In an A-type star the feature is
+            # essentially pure hydrogen, which is why it stays quickpick;
+            # in F and later, Ca II H dominates it and it is no longer a
+            # hydrogen wavelength in any useful sense.
+            (3970.1, "Hε + Ca II H 3970", True),
             (4101.7, "Hδ 4102", True),
             (4340.5, "Hγ 4340", True),
             (4861.3, "Hβ 4861", True),
             (6562.8, "Hα 6563", True),
+            # Higher series (H8/H9/H10 in the other common notation),
+            # converging on the Balmer jump at 3646 Å.  Individually weak
+            # and progressively crowded, so they are grouped to be switched
+            # on together when the blue end is what's being looked at.
+            (3889.1, "Hζ + He I 3889", False, "high series"),
+            (3835.4, "Hη 3835",        False, "high series"),
+            (3797.9, "Hθ 3798",        False, "high series"),
         ],
     },
     "Helium": {
         "colour": "#ffd060",
         "lines": [
+            (3888.6, "He I + Hζ 3889", False),  # 0.4 Å from H8 — one feature here
             (4026.2, "He I 4026",  False),
             (4471.5, "He I 4472",  False),
             (4685.7, "He II 4686", True),   # strongest WN line; WR/Of + hot star classifier
@@ -79,6 +100,22 @@ SPECTRAL_LINES = {
             (8335.1, "C I 8335",       False),
         ],
     },
+    # ── Calcium ────────────────────────────────────────────────────────
+    # H & K are the strongest features in the blue for anything F and
+    # later, growing monotonically through G and K; K also appears as
+    # interstellar absorption in hot-star spectra and in emission in
+    # symbiotics and novae.  The IR triplet is the red-end counterpart —
+    # strong, well separated, and the only non-telluric marker out there.
+    "Calcium": {
+        "colour": "#45e0c8",   # teal — between the greens and the blues, unused
+        "lines": [
+            (3933.7, "Ca II K 3934",      True,  "H & K"),   # sharp, isolated: usable blue anchor
+            (3968.5, "Ca II H + Hε 3968", False, "H & K"),   # see the Balmer note on the blend
+            (8498.0, "Ca II 8498",        False, "IR triplet"),
+            (8542.1, "Ca II 8542",        True,  "IR triplet"),   # strongest of the three
+            (8662.1, "Ca II 8662",        False, "IR triplet"),
+        ],
+    },
     "Atmospheric": {
         "colour": "#80d0ff",
         "lines": [
@@ -91,9 +128,17 @@ SPECTRAL_LINES = {
     "Other": {
         "colour": "#c0c0c0",
         "lines": [
-            (5892.9, "Na D 5893", True),    # strong, narrow doublet centre
-            (5460.7, "Hg 5461",   False),
-            (6598.9, "Ne 6599",   False),
+            (5892.9, "Na D 5893",    True),    # strong, narrow doublet centre
+            (5460.7, "Hg 5461",      False),
+            (6598.9, "Ne 6599",      False),
+            # Nebular emission, not a lamp line: strong in planetary
+            # nebulae, high-excitation symbiotics and novae in their
+            # nebular phase.  Parked here rather than in a group of its
+            # own; a "Nebular" group is the right home once [O III],
+            # [N II] and the Raman O VI features join it.  The companion
+            # [Ne III] 3967.5 is omitted — a third the strength and buried
+            # in the Ca II H + Hε blend, so it could never be attributed.
+            (3868.8, "[Ne III] 3869", False),
         ],
     },
     # ── Wolf-Rayet groups ──────────────────────────────────────────────────
@@ -162,7 +207,12 @@ SPECTRAL_LINES = {
     "Carbon Stars": {
         "colour": "#ff9de2",
         "lines": [
-            (3880.0, "CN 3880",        False),
+            # Violet system (0,0) P-branch band head, degraded to the
+            # violet: the sharp edge sits at 3883 and the band trails back
+            # toward the origin at 3875.  The head is what the marker
+            # should point at — the interior of the band has no feature to
+            # register against.
+            (3883.0, "CN 3883",        False),
             (4056.0, "C3 4056",        False),
             (4217.0, "CN 4217",        False),
             (4380.0, "C2 Swan 4380",   False),
@@ -203,6 +253,7 @@ BALMER_LINES      = flatten_group("Balmer")
 HELIUM_LINES      = flatten_group("Helium")
 OXYGEN_LINES      = flatten_group("Oxygen")
 CARBON_LINES      = flatten_group("Carbon")
+CALCIUM_LINES     = flatten_group("Calcium")
 ATMOSPHERIC_LINES = flatten_group("Atmospheric")
 CARBON_STAR_LINES = flatten_group("Carbon Stars")
 HERBIG_LINES      = flatten_group("Herbig / Fe II")

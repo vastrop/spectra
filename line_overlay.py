@@ -226,17 +226,21 @@ class LineOverlayPanel(ttk.Frame):
     # Drawing
     # ------------------------------------------------------------------
 
-    def draw(self, ax, y_max, skip=(), fontsize=10):
+    def draw(self, ax, y_max, skip=(), fontsize=6, occupied=None):
         """
         Draw the ticked lines on ``ax``, whose x-axis must be in Ångström.
 
         dispersion=1.0 with no polynomial makes plot_reference_lines place
-        each line at x = wavelength.  One call per colour, which also means
-        the label stagger runs per colour group.
+        each line at x = wavelength.  ``occupied`` is the shared label-slot
+        list: pass the one the host already used for its catalogue groups
+        so the annotations stagger against those instead of over them.
         """
+        if occupied is None:
+            occupied = []
         for colour, lines in lines_to_draw(self.index, self.selected, skip).items():
             plot_reference_lines(ax, lines, 1.0, y_max, colour=colour,
-                                 fontsize=fontsize, linestyle="-")
+                                 fontsize=fontsize, linestyle="-",
+                                 occupied=occupied)
 
 
 if __name__ == "__main__":
@@ -244,8 +248,13 @@ if __name__ == "__main__":
     # wrong without Tk being involved.
     idx = build_index()
 
-    # Flat groups keep a single None subgroup; WN carries real ones.
-    assert list(idx["Balmer"]["subs"]) == [None], idx["Balmer"]["subs"]
+    # Flat groups keep a single None subgroup; WN is entirely nested;
+    # Balmer mixes the two — its classic five hang off the group while
+    # the high series nests, and both shapes must survive together.
+    assert list(idx["Oxygen"]["subs"]) == [None], idx["Oxygen"]["subs"]
+    assert list(idx["Balmer"]["subs"]) == [None, "high series"], \
+        idx["Balmer"]["subs"]
+    assert len(idx["Balmer"]["subs"][None]) == 5
     assert None not in idx["Wolf-Rayet WN"]["subs"]
     assert "N III" in idx["Wolf-Rayet WN"]["subs"]
     assert idx["Wolf-Rayet WN"]["subs"]["N III"] == [

@@ -3170,26 +3170,38 @@ def best_y_shift(x, y, rotated_data, spectrum_width, aperture_half_height,
 # ---------------------------------------------------------------------------
 
 
-# Label heights for reference lines, as multipliers of y_max.  Neighbours
-# that would collide step up a level instead of overprinting each other.
-# Three levels covers the densest real case (a multiplet inside ~100 Å);
-# past that the labels overlap again, which is the honest cue that too
-# many groups are switched on at once.
-LABEL_LEVELS = (1.01, 1.10, 1.19)
+# Height at which labels are anchored, as a multiple of y_max.
+LABEL_LEVEL = 1.01
 
-# How close two labels may sit before the second is bumped up a level,
-# as a fraction of the visible x-range.  A fixed fraction rather than a
-# points-to-data conversion because the panels differ in both font size
-# (6 inline, 12 in the full viewer) and axis width, and the two effects
-# very nearly cancel.
-# ponytail: measure it off ax.get_window_extent() if a third panel with a
-# different aspect ever breaks that coincidence.
-LABEL_MIN_GAP_FRAC = 0.012
+# How many rows of labels may stack before a line gives up its label and
+# keeps only its rule.  Each row costs a full label height of headroom —
+# raising by less does not help, since a rotated label is as tall as its
+# string is long and neighbours would still cross.
+LABEL_MAX_LEVELS = 3
+
+# How much of a label's width a neighbour may cover before the neighbour
+# is dropped, as a fraction of the label.  0 refuses any contact and
+# silently hides half the lines wherever they cluster; 1 is the old
+# free-for-all where crowded labels printed into illegibility.  Partial
+# overlap stays readable — the glyph columns interleave rather than
+# collide — and keeps far more of the plot labelled.
+LABEL_OVERLAP_FRAC = 0.5
+
+# Breathing space either side of a label, in display pixels.  Labels are
+# measured, not estimated, so this is only the gap between neighbours.
+LABEL_PAD_PX = 2.0
+
+# Fallback width of a rotated label, as a multiple of the font size in
+# points, used only when the canvas cannot produce a renderer to measure
+# with.  Deliberately generous: over-reserving drops a label, which is
+# recoverable, while under-reserving prints two on top of each other.
+LABEL_WIDTH_PTS = 1.3
 
 
 def plot_reference_lines(ax, lines, dispersion, y_max,
                          poly_coeffs=None, n_pixels=None,
-                         colour="#ff6060", fontsize=5, linestyle="--"):
+                         colour="#ff6060", fontsize=5, linestyle="--",
+                         occupied=None):
     """
     Draw vertical reference lines on a pixel-axis spectrum plot.
 
@@ -3215,6 +3227,12 @@ def plot_reference_lines(ax, lines, dispersion, y_max,
         Rule style.  Dashed for the catalogue groups; callers drawing
         user-picked annotation lines pass a solid style so the two
         remain distinguishable on the same axes.
+    occupied : list or None
+        x-positions of labels already placed on this axis.  Pass one list
+        through every call that draws on the same axes and label spacing
+        spans all of them — otherwise each group starts from an empty
+        axis and two groups happily print over each other.  Appended to
+        in place; None keeps the placement local to this call.
 
     Read the current axis x-range so out-of-view lines are dropped
     entirely (rather than relying on clip_on, which still leaves the
@@ -3223,9 +3241,6 @@ def plot_reference_lines(ax, lines, dispersion, y_max,
     sitting exactly on the axis edge — where its label would spill
     off — is also suppressed.
 
-    Staggering is per call, so two groups enabled at once can still
-    collide with each other; within one group — where crowding actually
-    bites — the labels stay readable.
     """
     xlo, xhi = ax.get_xlim()
     if xhi < xlo:    # axis may be inverted; normalise
@@ -3249,32 +3264,86 @@ def plot_reference_lines(ax, lines, dispersion, y_max,
         return
     placed.sort()
 
-    min_gap = LABEL_MIN_GAP_FRAC * (xhi - xlo)
-    levels = []
-    level = 0
-    prev_x = None
+    # Every line in view gets its rule, whether or not it ends up labelled.
     for xpix, _label in placed:
-        # Drop back to the baseline as soon as there is room, so an
-        # isolated line is never parked high for no visible reason.
-        level = 0 if (prev_x is None or xpix - prev_x >= min_gap) \
-            else (level + 1) % len(LABEL_LEVELS)
-        levels.append(level)
-        prev_x = xpix
-
-    # Expand the y-axis so the labels do not overlap the spectrum: the
-    # text needs about 0.24 * y_max of room above its anchor.
-    top = LABEL_LEVELS[max(levels)] + 0.24
-    ylo, ycur = ax.get_ylim()
-    if ycur < top * y_max:
-        ax.set_ylim(ylo, top * y_max)
-
-    for (xpix, label), lvl in zip(placed, levels):
         # ymax=0.8 stops the rule short of the label text above it.
         ax.axvline(x=xpix, color=colour, linestyle=linestyle,
                    linewidth=0.8, alpha=0.5, ymax=0.8)
-        ax.text(xpix, y_max * LABEL_LEVELS[lvl], label, rotation=90,
-                va="bottom", ha="center", color=colour, fontsize=fontsize,
-                clip_on=True)
+
+    # Interrupt the rule where the label crosses it: an opaque pad in the
+    # axes' own colour breaks the line across the text and lets it resume
+    # above, so a label is never read through its own rule.
+    face = ax.get_facecolor()
+    if face[3] == 0:              # transparent axes — the canvas shows through
+        face = ax.figure.get_facecolor()
+    label_bbox = dict(facecolor=(*face[:3], 1.0), edgecolor="none", pad=1.5)
+
+    # Pack the labels as boxes, measured rather than estimated: an
+    # estimate has to be generous to be safe, and every point it
+    # over-reserves is a label needlessly dropped in a crowded stretch.
+    # A label that collides with one already placed is raised a full row
+    # — one label height, since anything less leaves the glyph columns
+    # crossing — and only gives up its label when every row is taken.
+    #
+    # Boxes are display pixels, with y measured from the common anchor so
+    # the numbers survive the y-limit changes below and stay comparable
+    # across calls.  The list is shared by every call drawing on this
+    # axis, which is what keeps two separately drawn groups off each other.
+    renderer = getattr(ax.figure.canvas, "get_renderer", None)
+    renderer = renderer() if renderer is not None else None
+    scale = ax.figure.dpi / 72.0
+    ax_h_px = (ax.get_position().height * ax.figure.get_figheight()
+               * ax.figure.dpi)
+    if occupied is None:
+        occupied = []
+
+    kept = []          # (text artist, vertical offset as a fraction of the axes)
+    top_frac = 0.0     # highest point any label reaches, same units
+    for xpix, label in placed:
+        txt = ax.text(xpix, y_max * LABEL_LEVEL, label, rotation=90,
+                      va="bottom", ha="center", color=colour,
+                      fontsize=fontsize, clip_on=True, bbox=label_bbox)
+        if renderer is not None:
+            bb = txt.get_window_extent(renderer)
+            w_px, h_px = bb.width, bb.height
+        else:
+            w_px = LABEL_WIDTH_PTS * fontsize * scale
+            h_px = 0.62 * fontsize * len(label) * scale
+        centre = ax.transData.transform((xpix, 0.0))[0]
+        # Shrink the claim by the tolerated overlap, so neighbours may
+        # interleave that far before one of them gives up its label.
+        half = (w_px / 2.0 + LABEL_PAD_PX) * (1.0 - LABEL_OVERLAP_FRAC)
+        lo_x, hi_x = centre - half, centre + half
+
+        row = h_px + LABEL_PAD_PX
+        for level in range(LABEL_MAX_LEVELS):
+            y0, y1 = level * row, level * row + h_px
+            if not any(lo_x < ohi and olo < hi_x and y0 < oy1 and oy0 < y1
+                       for olo, ohi, oy0, oy1 in occupied):
+                break
+        else:
+            txt.remove()          # every row taken: the rule stands alone
+            continue
+        occupied.append((lo_x, hi_x, y0, y1))
+        if ax_h_px > 0:
+            kept.append((txt, y0 / ax_h_px))
+            top_frac = max(top_frac, y1 / ax_h_px)
+
+    # Open enough headroom for the tallest label on the highest row, then
+    # move each label onto its row.  Solving anchor + frac*(top - ylo) <=
+    # top for top gives the division; the cap keeps the spectrum itself
+    # from being squeezed away when a stretch is hopelessly crowded.
+    if kept:
+        ylo, ycur = ax.get_ylim()
+        need = ylo + (LABEL_LEVEL * y_max - ylo) / (1.0 - min(0.7, top_frac))
+        if ycur < need:
+            ax.set_ylim(ylo, need)
+        ylo, ytop = ax.get_ylim()
+        for txt, off_frac in kept:
+            if off_frac:
+                x, _y = txt.get_position()
+                txt.set_position(
+                    (x, y_max * LABEL_LEVEL + (ytop - ylo) * off_frac))
 
 def read_fits_image(path):
     """
