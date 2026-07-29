@@ -994,6 +994,7 @@ class NinaDialog(tk.Toplevel):
             self._q.put(("mount_done", text))
 
         self.v_status.set(f"Slewing to {name}…")
+        self.v_slew.set(f"Slewing to {name}…")   # replaced by the outcome
         self._start_mount_worker(worker, "nina-goto-slew")
 
     def _focus_run(self):
@@ -1033,6 +1034,7 @@ class NinaDialog(tk.Toplevel):
                 self._q.put(("mount_done", f"Focus-run slew failed: {exc}"))
 
         self.v_status.set(f"Slewing to {name} for autofocus…")
+        self.v_slew.set(f"Slewing to {name} for autofocus…")
         self._start_mount_worker(worker, "nina-focus-slew")
 
     # ── autofocus (worker thread, same code as tools/spectral_autofocus) ──
@@ -1151,6 +1153,7 @@ class NinaDialog(tk.Toplevel):
             self._q.put(("mount_done", text))
 
         self.v_status.set("Returning to the saved target…")
+        self.v_slew.set("Returning to the saved target…")
         self._start_mount_worker(worker, "nina-focus-return")
 
     # ── capture: shared bits ───────────────────────────────────────────
