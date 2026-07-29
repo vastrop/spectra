@@ -737,10 +737,30 @@ class FullSpectrumDialog(tk.Toplevel):
         norm_int_normalized = np.nan_to_num(norm_int_normalized, nan=0.0)
         luminance_strip = norm_int_normalized.reshape(1, -1)
 
+        # imshow spreads its samples evenly across ``extent``, but ``wls``
+        # is not evenly spaced — the dispersion polynomial puts a different
+        # number of Å in each pixel — and it spans wls[0]..wls[-1] rather
+        # than the whole display window.  Stretching the samples across
+        # [sp_min, sp_max] therefore slides every feature away from where
+        # the curve above draws it, by tens of Å near the middle of a cubic
+        # solution: enough to park Hα's band beside its own peak.
+        # Resampling onto a uniform axis makes imshow's assumption true,
+        # and taking the extent from the data (less half a cell, so sample
+        # centres land on their own wavelengths) keeps the two panels
+        # registered.  wls is strictly increasing — validate_dispersion_poly
+        # rejects any fit that is not — so np.interp is safe here.
+        extent = (p["sp_min"], p["sp_max"], 0, 1)
+        if len(wls) >= 2:
+            uniform = np.linspace(wls[0], wls[-1], len(wls))
+            luminance_strip = np.interp(
+                uniform, wls, norm_int_normalized).reshape(1, -1)
+            half_cell = (wls[-1] - wls[0]) / (2 * (len(wls) - 1))
+            extent = (wls[0] - half_cell, wls[-1] + half_cell, 0, 1)
+
         self.lum_img = ax.imshow(
             luminance_strip,
             aspect='auto',
-            extent=(p["sp_min"], p["sp_max"], 0, 1),
+            extent=extent,
             cmap='gray',
             vmin=0,
             vmax=1,
