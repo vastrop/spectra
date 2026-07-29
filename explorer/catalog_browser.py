@@ -450,7 +450,8 @@ def build_browser(container, rows, columns, headings, sort="vmag",
     """Assemble the full browser into ``container``: filter bar + tree.
 
     The bar holds the "Visible tonight" filter (on by default; observer
-    lat/lon persisted in observer.json), a shown-count label, "Schedule
+    lat/lon persisted in observer.json) and the mutually exclusive
+    "Visible now", a shown-count label, "Schedule
     selected" (appends to the scheduler_targets.txt outbox, multi-select
     aware) and — when a ``goto`` callback is given — the "Goto selected"
     button. Live Alt°/Az° and night-max Culm° columns are appended to
@@ -461,11 +462,15 @@ def build_browser(container, rows, columns, headings, sort="vmag",
     bar = ttk.Frame(container)
     bar.pack(side="bottom", fill="x")
     v_visible = tk.BooleanVar(master=container, value=True)
+    v_now = tk.BooleanVar(master=container, value=False)
     lat0, lon0 = load_observer()
     v_lat = tk.StringVar(master=container, value=f"{lat0:g}")
     v_lon = tk.StringVar(master=container, value=f"{lon0:g}")
     v_count = tk.StringVar(master=container)
     cache = {}
+    # Live altitudes as numbers, kept beside the formatted Alt° cells: the
+    # "Visible now" filter must compare the real value, not the rounded one.
+    alt_now = []
 
     def altitudes_for(lat, lon):   # night-max — drives the visibility filter
         import time as _time
@@ -477,9 +482,11 @@ def build_browser(container, rows, columns, headings, sort="vmag",
         return cache[key]
 
     def fill_altaz(lat, lon):
+        alt_now.clear()
         for row, (alt, az) in zip(rows, current_altaz(rows, lat, lon)):
             row["alt"] = f"{alt:.0f}"
             row["az"] = f"{az:.0f}"
+            alt_now.append(alt)
         # Culm is the night-max the filter runs on — the "how good does it
         # get tonight" number the scheduler outbox is chosen by.
         for row, culm in zip(rows, altitudes_for(lat, lon)):
@@ -504,7 +511,7 @@ def build_browser(container, rows, columns, headings, sort="vmag",
 
     def refresh():
         shown = rows
-        if v_visible.get():
+        if v_visible.get() or v_now.get():
             try:
                 lat, lon = float(v_lat.get()), float(v_lon.get())
             except ValueError:
@@ -512,14 +519,19 @@ def build_browser(container, rows, columns, headings, sort="vmag",
                     "Observer location", "Lat/Lon must be decimal degrees.",
                     parent=container)
                 v_visible.set(False)
+                v_now.set(False)
                 return
             try:
-                alts = altitudes_for(lat, lon)
+                fill_altaz(lat, lon)
+                # Same threshold, different instant: "now" runs on the live
+                # altitude (the Alt° column, i.e. at dusk while it is still
+                # day), "tonight" on the night max.
+                alts = list(alt_now) if v_now.get() else altitudes_for(lat, lon)
             except Exception as exc:   # filter must not break the browser
                 print(f"Visibility filter unavailable: {exc}")
                 v_visible.set(False)
+                v_now.set(False)
             else:
-                fill_altaz(lat, lon)
                 save_observer(lat, lon)
                 shown = [r for r, a in zip(rows, alts) if a >= MIN_ALT_DEG]
         set_rows(shown)
@@ -545,15 +557,36 @@ def build_browser(container, rows, columns, headings, sort="vmag",
                 tree.set(iid, "culm", row["culm"])   # hourly cache rollover
                 if "nspec" in columns:
                     tree.set(iid, "nspec", row["nspec"])
+            # "Visible now" membership turns with the sky, so it has to be
+            # re-applied — but only when a row actually crossed the
+            # threshold, since a re-render every minute would reset the
+            # scroll position under the user.  A simultaneous rise and set
+            # hides in the count and waits for the next minute.
+            if v_now.get() and (sum(a >= MIN_ALT_DEG for a in alt_now)
+                                != len(tree.get_children())):
+                refresh()
         except Exception:
             pass   # lat/lon mid-edit or a transient — retry next minute
         container.after(60_000, tick)
 
     container.after(60_000, tick)
 
+    # The two visibility filters answer different questions ("worth planning
+    # for tonight" vs "shoot it right now"), so they are mutually exclusive
+    # rather than combined.
+    def toggle(chosen, other):
+        if chosen.get():
+            other.set(False)
+        refresh()
+
     ttk.Checkbutton(bar, text=f"Visible tonight (>{MIN_ALT_DEG:g}°)",
-                    variable=v_visible, command=refresh).pack(
+                    variable=v_visible,
+                    command=lambda: toggle(v_visible, v_now)).pack(
         side="left", padx=(6, 10), pady=4)
+    ttk.Checkbutton(bar, text=f"Visible now (>{MIN_ALT_DEG:g}°)",
+                    variable=v_now,
+                    command=lambda: toggle(v_now, v_visible)).pack(
+        side="left", padx=(0, 10), pady=4)
     for label, var in (("Lat", v_lat), ("Lon", v_lon)):
         ttk.Label(bar, text=label).pack(side="left")
         entry = ttk.Entry(bar, textvariable=var, width=7)
