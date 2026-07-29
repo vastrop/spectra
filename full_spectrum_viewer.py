@@ -509,6 +509,11 @@ class FullSpectrumDialog(tk.Toplevel):
                 have_sigma):
         """Draw the spectrum and any active overlays/corrections."""
         target_name = self._target_name()
+        capture = self._capture_label()
+        # Identity and stacked exposure both move while the window is open
+        # (a source gets identified, frames keep landing), so the window
+        # title is re-stamped on every render, not just at construction.
+        self.title(self._window_title())
 
         confidence = have_sigma and self.v_show_confidence.get()
 
@@ -643,9 +648,11 @@ class FullSpectrumDialog(tk.Toplevel):
         if have_continuum and continuum is not None:
             self._render_corrected(wls, norm_int, continuum, p)
 
-        # Main title
+        # Main title — the exported PNG's caption, so it carries the
+        # integration time too.
         self.fig.suptitle(
-            f"Calibrated & normalised spectrum — {target_name}",
+            f"Calibrated & normalised spectrum — {target_name}"
+            + (f"  ({capture})" if capture else ""),
             color=FG, fontsize=11, y=0.98,
         )
 
@@ -845,14 +852,57 @@ class FullSpectrumDialog(tk.Toplevel):
         return arr[order, 0], arr[order, 1]
 
     def _target_name(self):
-        """Last path component of the target FITS file, '/' and '\\' safe."""
+        """Who the spectrum is of: the identified source's SIMBAD id first,
+        the frame's OBJECT keyword next, the target file's basename last
+        ('/' and '\\' safe).
+
+        Identity beats filename because the filename is often not the
+        target's name at all — every livestack of the night is analysed
+        through the same livestack.fit.
+        """
+        main_id = getattr(self.parent, "_simbad_open_id", None)
+        if main_id:
+            return main_id
+        header = getattr(self.parent, "_target_header", None)
+        if header is not None:
+            obj = str(header.get("OBJECT", "") or "").strip()
+            if obj:
+                return obj
         return (self.parent.v_target.get()
                 .strip()
                 .split("/")[-1]
                 .split(chr(92))[-1])
 
+    def _capture_label(self):
+        """Total integration behind the spectrum, e.g. '18 × 30 s = 9.0 min',
+        or None when the frame doesn't say.
+
+        A livestack is asked for its running total rather than its header:
+        the stashed header is the *reference frame's*, so its EXPTIME is
+        one frame's exposure, not the stack's.
+        """
+        n = 0
+        if getattr(self.parent, "_frame_override", None) is not None:
+            total = float(getattr(self.parent, "_stack_total_exp", 0.0) or 0.0)
+            n = int(getattr(self.parent, "_stack_count", 0) or 0)
+        else:
+            total = 0.0
+            header = getattr(self.parent, "_target_header", None)
+            for key in ("EXPTIME", "EXPOSURE"):
+                try:
+                    total = float(header[key])
+                    break
+                except (KeyError, TypeError, ValueError):
+                    continue
+        if not np.isfinite(total) or total <= 0.0:
+            return None
+        text = f"{total:.0f} s" if total < 120.0 else f"{total / 60.0:.1f} min"
+        return f"{n} × {total / n:.0f} s = {text}" if n > 1 else text
+
     def _window_title(self):
-        return f"Calibrated spectrum — {self._target_name()}"
+        capture = self._capture_label()
+        name = self._target_name()
+        return f"{name} — {capture}" if capture else name
 
     def _close(self):
         """
@@ -863,3 +913,54 @@ class FullSpectrumDialog(tk.Toplevel):
         if getattr(self.parent, "_full_spec_dialog", None) is self:
             self.parent._full_spec_dialog = None
         self.destroy()
+
+
+if __name__ == "__main__":
+    # Title helpers only ever read parent attributes, so a stub parent on an
+    # uninitialised instance exercises them without Tk or a spectrum.
+    class _Var:
+        def __init__(self, value):
+            self.value = value
+
+        def get(self):
+            return self.value
+
+    def _dialog(target="", header=None, main_id=None, is_stack=False,
+                stack_total=0.0, stack_count=0):
+        dlg = FullSpectrumDialog.__new__(FullSpectrumDialog)
+        parent = type("_StubExplorer", (), {})()
+        parent.v_target = _Var(target)
+        parent._target_header = header
+        parent._simbad_open_id = main_id
+        parent._frame_override = object() if is_stack else None
+        parent._stack_total_exp = stack_total
+        parent._stack_count = stack_count
+        dlg.parent = parent
+        return dlg
+
+    # Identity waterfall: SIMBAD id, then OBJECT, then the file's basename.
+    assert _dialog(target="C:\\data\\x.fit", header={"OBJECT": "HD 1"},
+                   main_id="* alf Lyr")._target_name() == "* alf Lyr"
+    assert _dialog(target="C:\\data\\x.fit",
+                   header={"OBJECT": " HD 1 "})._target_name() == "HD 1"
+    assert _dialog(target="C:/data/sub\\x.fit",
+                   header={"OBJECT": ""})._target_name() == "x.fit"
+    assert _dialog(target="x.fit")._target_name() == "x.fit"
+
+    # Exposure: a single frame from its header, a stack from the running
+    # total — the stashed header is the reference frame's, one exposure only.
+    assert _dialog(header={"EXPTIME": 45.0})._capture_label() == "45 s"
+    assert _dialog(header={"EXPOSURE": 600.0})._capture_label() == "10.0 min"
+    assert _dialog(header={"EXPTIME": "bad"})._capture_label() is None
+    assert _dialog(header={})._capture_label() is None
+    assert _dialog()._capture_label() is None
+    assert _dialog(header={"EXPTIME": 30.0}, is_stack=True, stack_total=540.0,
+                   stack_count=18)._capture_label() == "18 × 30 s = 9.0 min"
+    # A one-frame stack reads as a plain exposure, not "1 × 30 s = 30 s".
+    assert _dialog(is_stack=True, stack_total=30.0,
+                   stack_count=1)._capture_label() == "30 s"
+
+    assert _dialog(target="x.fit", header={"EXPTIME": 45.0},
+                   main_id="WR 136")._window_title() == "WR 136 — 45 s"
+    assert _dialog(target="x.fit")._window_title() == "x.fit"
+    print("full_spectrum_viewer self-check OK")
