@@ -138,6 +138,24 @@ SPECTRAL_LINES = {
             (5592.0, "O III 5592",     False),
         ],
     },
+    # ── Herbig Ae/Be ───────────────────────────────────────────────────
+    # Fe II multiplet 42 — emission from the inner gaseous disc of an
+    # accreting young star rather than from its photosphere, and the
+    # signature that identifies one.  Held to these three because they are
+    # what an amateur slitless spectrum actually resolves; the fainter
+    # Herbig features (multiplet 49, the forbidden [Fe II] and [O I] lines,
+    # the Ca II triplet) sit in the noise at this dispersion and would only
+    # crowd the plot with markers pointing at nothing.
+    # Not quickpick: a disc emission line's centroid is no basis for
+    # anchoring a dispersion fit — use the Balmer lines and telluric bands.
+    "Herbig / Fe II": {
+        "colour": "#b98cff",   # violet — unused by the other groups
+        "lines": [
+            (4923.9, "Fe II 4924", False),
+            (5018.4, "Fe II 5018", False),
+            (5169.0, "Fe II 5169", False),
+        ],
+    },
     "Carbon Stars": {
         "colour": "#ff9de2",
         "lines": [
@@ -184,5 +202,6 @@ OXYGEN_LINES      = flatten_group("Oxygen")
 CARBON_LINES      = flatten_group("Carbon")
 ATMOSPHERIC_LINES = flatten_group("Atmospheric")
 CARBON_STAR_LINES = flatten_group("Carbon Stars")
+HERBIG_LINES      = flatten_group("Herbig / Fe II")
 WR_WN_LINES       = flatten_group("Wolf-Rayet WN")
 WR_WC_LINES       = flatten_group("Wolf-Rayet WC")

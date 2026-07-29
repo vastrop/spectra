@@ -147,6 +147,7 @@ from wavelength import (
     CARBON_LINES,
     ATMOSPHERIC_LINES,
     CARBON_STAR_LINES,
+    HERBIG_LINES,
     WR_WN_LINES,
     WR_WC_LINES,
 )
@@ -194,6 +195,7 @@ DEFAULTS = dict(
     PLOT_OXYGEN_LINES      = False,
     PLOT_CARBON_LINES      = False,
     PLOT_CARBON_STAR_LINES = False,
+    PLOT_HERBIG_LINES      = False,
     PLOT_WR_WN_LINES       = False,
     PLOT_WR_WC_LINES       = False,
     PLOT_CAL_LINES         = False,
@@ -1341,6 +1343,14 @@ class SpectrumExplorer(tk.Tk):
             value=bool(DEFAULTS["PLOT_CARBON_STAR_LINES"]))
         ttk.Checkbutton(parent, text="Plot Carbon Star lines",
                         variable=self.v_carbon_star_lines,
+                        command=self._on_ref_lines_toggle).grid(
+            row=row, column=0, sticky="w", pady=1)
+        row += 1
+
+        self.v_herbig_lines = tk.BooleanVar(
+            value=bool(DEFAULTS["PLOT_HERBIG_LINES"]))
+        ttk.Checkbutton(parent, text="Plot Herbig / Fe II lines",
+                        variable=self.v_herbig_lines,
                         command=self._on_ref_lines_toggle).grid(
             row=row, column=0, sticky="w", pady=1)
         row += 1
@@ -5473,6 +5483,7 @@ class SpectrumExplorer(tk.Tk):
             (self.v_oxygen_lines,      OXYGEN_LINES,      "#90ee90"),
             (self.v_carbon_lines,      CARBON_LINES,      "#ffb347"),
             (self.v_carbon_star_lines, CARBON_STAR_LINES, "#ff9de2"),
+            (self.v_herbig_lines,      HERBIG_LINES,      "#b98cff"),
             (self.v_wr_wn_lines,       WR_WN_LINES,       "#7ecfff"),
             (self.v_wr_wc_lines,       WR_WC_LINES,       "#ffb870"),
         ]

@@ -37,6 +37,7 @@
     "Plot Oxygen lines": "Overlays reference marker lines for Oxygen lines on the spectrum plots. Off by default.",
     "Plot Carbon lines": "Overlays reference marker lines for Carbon lines on the spectrum plots. Off by default.",
     "Plot Carbon Star lines": "Overlays reference marker lines for carbon-star molecular bands on the spectrum plots. Off by default.",
+    "Plot Herbig / Fe II lines": "Overlays reference marker lines for Fe II multiplet 42 (4924, 5018, 5169 Å), the inner-disc emission signature of an accreting Herbig Ae/Be star. Off by default.",
     "Plot WR WN lines": "Overlays reference marker lines for Wolf-Rayet WN-type emission lines on the spectrum plots. Off by default.",
     "Plot WR WC lines": "Overlays reference marker lines for Wolf-Rayet WC-type emission lines on the spectrum plots. Off by default.",
     "Show calibration lines": "Overlays vertical markers at the currently placed dispersion-calibration node wavelengths, for visual reference. Display only — does not affect the fit.",
