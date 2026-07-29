@@ -1702,6 +1702,7 @@ class SpectrumExplorer(tk.Tk):
         sky_hi  = strip_data["sky_hi"]
         mask_hi = strip_data.get("mask_hi")
         contam_mask = strip_data.get("contam_mask")
+        contam_science = strip_data.get("contam_science")
         spec_start_px = strip_data.get("spec_start_px")
 
         # Build ordered band list top→bottom: sky_hi, aperture, sky_lo
@@ -1806,7 +1807,15 @@ class SpectrumExplorer(tk.Tk):
             ap_h, ap_w = ap.shape
             mask2d = np.broadcast_to(contam_mask, (ap_h, ap_w))
             red_overlay = np.zeros((ap_h, ap_w, 4), dtype=float)
-            red_overlay[mask2d] = [1.0, 0.0, 0.0, 0.5]
+            # Two strengths, matching the log: full red where the column
+            # reaches the extracted spectrum, faint where it is truncated
+            # away with the zero-order zone.  The faint bars stay drawn —
+            # they explain the count, and a mask sitting just outside the
+            # window is worth seeing when sp_min is about to move.
+            red_overlay[mask2d] = [1.0, 0.0, 0.0, 0.15]
+            science2d = (np.broadcast_to(contam_science, (ap_h, ap_w))
+                         if contam_science is not None else mask2d)
+            red_overlay[science2d] = [1.0, 0.0, 0.0, 0.5]
             ap_ax.imshow(red_overlay, origin="lower",
                          extent=[0, ap_w, 0, ap_h], aspect="auto",
                          interpolation="nearest", zorder=4)
@@ -2318,19 +2327,54 @@ class SpectrumExplorer(tk.Tk):
             self.all_sources_xy if self.all_sources_xy is not None
             else np.empty((0, 2)),
             bbox, fwhm_for_mask, sy, trace_exclude_fwhm=excl)
+
+        # ── Which of those can reach the extracted spectrum ────────────
+        # The strip runs from the zero order outwards, so it always holds
+        # sources the extraction then truncates away — the target's own
+        # zero order at col 0 first among them.  Only a source inside
+        # [sp_min, sp_max] can put a bump in the science spectrum, and only
+        # that deserves a red line; the rest are stated in plain text so a
+        # warning always means something to act on.  The polynomial is
+        # recomputed here rather than shared with the calibrated panel
+        # below: that copy lives inside a try that can bail out before it,
+        # and a polyval over the strip is not worth restructuring for.
+        poly_c = self._validate_dispersion_poly(
+            self.get_dispersion_poly(), len(col_sums))
+        col_wls = pixels_to_wavelengths(
+            np.arange(len(col_sums)), p["dispersion"], poly_coeffs=poly_c)
+        in_window = (col_wls >= p["sp_min"]) & (col_wls <= p["sp_max"])
+
+        def _in_window(cols):
+            """Science-window flag for each strip column in ``cols``."""
+            cols = np.atleast_1d(np.asarray(cols, dtype=float))
+            if not len(in_window):
+                return np.zeros(len(cols), dtype=bool)
+            return in_window[np.clip(np.rint(cols).astype(int),
+                                     0, len(in_window) - 1)]
+
         # Say what was passed over and why.  On-trace is the one call this
         # cannot make from geometry — the target's emission line and a star
         # sitting on the trace are the same picture — so it must not be a
         # silent decision: a real contaminant left unmasked shows up as a
         # bump the user would otherwise take for a spectral feature.
         if len(on_trace):
-            where = ", ".join(f"col {int(round(c))} ({d:+.1f} px)"
-                              for c, d in on_trace)
-            self._log(
-                f"Contaminators: {len(on_trace)} source(s) inside the band "
-                f"ignored as the target's own light (within "
-                f"{excl:.2f} × FWHM = {excl * fwhm_for_mask:.1f} px of the "
-                f"trace): {where}.", level="warn")
+            hit = _in_window(on_trace[:, 0])
+            near = (f"within {excl:.2f} × FWHM = "
+                    f"{excl * fwhm_for_mask:.1f} px of the trace")
+            if hit.any():
+                where = ", ".join(f"col {int(round(c))} ({d:+.1f} px)"
+                                  for c, d in on_trace[hit])
+                self._log(
+                    f"Contaminators: {int(hit.sum())} source(s) in the "
+                    f"science window ignored as the target's own light "
+                    f"({near}): {where}.", level="warn")
+            if (~hit).any():
+                where = ", ".join(f"col {int(round(c))} ({d:+.1f} px)"
+                                  for c, d in on_trace[~hit])
+                self._log(
+                    f"Contaminators: {int((~hit).sum())} source(s) ignored as "
+                    f"the target's own light ({near}), outside the science "
+                    f"window — zero order and buffer: {where}.")
 
         # Build a per-column boolean mask of contaminated regions
         contam_mask = np.zeros(col_sums.shape, dtype=bool)
@@ -2368,10 +2412,18 @@ class SpectrumExplorer(tk.Tk):
             self._last_contam_mask = None
 
         if len(contam_cols):
+            hit = _in_window(contam_cols)
             mask_state = "masked" if self.v_contam_mask.get() else "shown but not masked"
-            self._log(
-                f"Detected {len(contam_cols)} in-aperture "
-                f"contaminator(s); {mask_state}.")
+            if hit.any():
+                self._log(
+                    f"Detected {int(hit.sum())} in-aperture contaminator(s) "
+                    f"in the science window ({len(contam_cols)} in the "
+                    f"strip); {mask_state}.", level="warn")
+            else:
+                self._log(
+                    f"Detected {len(contam_cols)} in-aperture "
+                    f"contaminator(s), none in the science window; "
+                    f"{mask_state}.")
 
         # Draw extraction boxes via partial ax_main redraw
         self._draw_overlay_boxes(bbox)
@@ -2394,6 +2446,8 @@ class SpectrumExplorer(tk.Tk):
             "sky_hi":      sky_hi   if sky_hi.shape[0]  > 0 else None,
             "mask_hi":     mask_hi  if sky_hi.shape[0]  > 0 else None,
             "contam_mask": contam_mask if contam_mask.any() else None,
+            "contam_science": (contam_mask & in_window
+                               if contam_mask.any() else None),
             "spec_start_px": spec_start_px,
         })
 
