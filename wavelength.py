@@ -52,8 +52,12 @@ SPECTRAL_LINES = {
             # converging on the Balmer jump at 3646 Å.  Individually weak
             # and progressively crowded, so they are grouped to be switched
             # on together when the blue end is what's being looked at.
+            # Hη is quickpick anyway: below 4000 Å the dispersion is at its
+            # most non-linear and 3970 is the only other anchor down there.
+            # Its neighbours stay off the quick pick — Hζ is blended with
+            # He I 3889 and Hθ is already in the crowded convergence.
             (3889.1, "Hζ + He I 3889", False, "high series"),
-            (3835.4, "Hη 3835",        False, "high series"),
+            (3835.4, "Hη 3835",        True,  "high series"),
             (3797.9, "Hθ 3798",        False, "high series"),
         ],
     },
