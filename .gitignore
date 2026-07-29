@@ -24,7 +24,10 @@ old_data/
 *.fits
 *.gif
 
-# local working notes & one-off analysis outputs (deliberately untracked)
+# local working notes & one-off analysis outputs (deliberately untracked).
+# Per-target analysis folders hold frames and screenshots together: *.fit
+# already covers the frames, the screenshots need the folder.
+Herbig Haro Analysis/
 AGENTS.md
 notesreport.md
 initial_release.md
