@@ -1062,6 +1062,7 @@ class SpectraBrowser(tk.Tk):
 
     # ── DB ────────────────────────────────────────────────────────────
     def _open_db(self):
+        self._summary = ""          # stale counts must not survive a reopen
         if self._conn is not None:
             self._conn.close()
             self._conn = None
@@ -1300,6 +1301,7 @@ class SpectraBrowser(tk.Tk):
         self.txt_notes.pack(side="left", fill="both", expand=True)
 
         self.v_status = tk.StringVar()
+        self._summary = ""          # DB counts, kept ahead of any message
         tk.Label(self, textvariable=self.v_status, bg=BG, fg=FG,
                  font=("Courier New", 9), anchor="w").pack(
             side="bottom", fill="x", padx=10, pady=(0, 6))
@@ -1327,7 +1329,10 @@ class SpectraBrowser(tk.Tk):
         self.canvas.get_tk_widget().configure(width=w, height=h)
 
     def _status(self, text):
-        self.v_status.set(text)
+        # The DB counts stay put; transient messages append to them so a
+        # "note saved" does not hide what the database holds.
+        self.v_status.set(f"{self._summary}    {text}".strip()
+                          if self._summary else text)
 
     def _sort_by(self, col):
         """Reorder the star rows by a column; a second click reverses."""
@@ -1357,6 +1362,12 @@ class SpectraBrowser(tk.Tk):
 
     # ── Tree population ───────────────────────────────────────────────
     def _refresh(self):
+        # Every curation action rebuilds the whole tree, so remember where
+        # the user was; a spectrum that no longer exists (just deleted)
+        # falls back to the star it belonged to.
+        sel = list(self.tree.selection())
+        fallback = [f"star-{self._star_by_iid[i][0]}"
+                    for i in sel if i in self._star_by_iid]
         self.tree.delete(*self.tree.get_children())
         self._samples_cache.clear()
         self._exclusions_cache.clear()
@@ -1422,9 +1433,18 @@ class SpectraBrowser(tk.Tk):
             col, reverse = self._sort_state
             self._sort_state = (col, not reverse)
             self._sort_by(col)
-        self._status(f"DB: {self._db_path}    "
-                     f"{shown}/{len(model)} stars, {n_spec} spectra"
-                     + (f"  (filter: {flt})" if flt != "All" else ""))
+        restore = [i for i in sel if self.tree.exists(i)] or list(
+            dict.fromkeys(i for i in fallback if self.tree.exists(i)))
+        if restore:
+            self.tree.selection_set(restore)
+            self.tree.focus(restore[0])
+            self.tree.see(restore[0])   # opens the star row if collapsed
+        total_spec = sum(len(s) for _st, s in model)
+        counts = (f"{shown}/{len(model)} stars, {n_spec}/{total_spec} "
+                  f"spectra  (filter: {flt})" if flt != "All"
+                  else f"{len(model)} stars, {total_spec} spectra")
+        self._summary = f"DB: {self._db_path}    {counts}"
+        self._status("")
         self._plot_selection()
 
     # ── Selection → spectra ids ───────────────────────────────────────
