@@ -207,6 +207,7 @@ class NinaDialog(tk.Toplevel):
         self._last_poll = 0.0
         self._led_phase = False         # alternates greens: poll heartbeat
         self._resume_guiding = False    # was guiding at focus-run start
+        self._mount_j2000 = None        # last polled pointing, J2000 degrees
 
         self._load_state()
         # Editing the base folder invalidates the remembered subfolder.
@@ -638,6 +639,8 @@ class NinaDialog(tk.Toplevel):
                         self._start_return_slew()
                 elif kind == "mount_pos":
                     self.v_mount.set(msg[1])
+                elif kind == "mount_j2000":
+                    self._mount_j2000 = msg[1]
                 elif kind == "astar_rows":
                     self._show_astars(msg[1])
                 elif kind == "mount_done":
@@ -704,8 +707,13 @@ class NinaDialog(tk.Toplevel):
                 self._q.put(("status", text))
                 self._q.put(("led", True))
                 try:
-                    self._q.put(("mount_pos",
-                                 self._mount_readout(client.mount_info())))
+                    info = client.mount_info()
+                    self._q.put(("mount_pos", self._mount_readout(info)))
+                    # Published separately so an epoch-conversion failure
+                    # costs the catalogue browsers their Slew° column, not
+                    # the readout that already parsed fine.
+                    self._q.put(("mount_j2000",
+                                 self._mount_coordinates(info)))
                 except Exception:
                     pass    # no mount: keep the last readout / hint
             except Exception as e:
@@ -775,6 +783,7 @@ class NinaDialog(tk.Toplevel):
                     info = client.mount_info()
                     self._q.put(("mount_pos", self._mount_readout(info)))
                     ra, dec = self._mount_coordinates(info)
+                    self._q.put(("mount_j2000", (ra, dec)))
                     self._q.put(("astar_rows",
                                  _nearest_astars(self._load_astars(),
                                                  ra, dec)))
@@ -958,6 +967,18 @@ class NinaDialog(tk.Toplevel):
             return
         name, ra, dec, _vmag = star
         self.slew_to(name, ra, dec)
+
+    def mount_j2000(self):
+        """Public pointing read — the catalogue browsers' Slew° column.
+
+        (ra_deg, dec_deg) in J2000, or None before the first successful
+        mount read. Served from the 5 s status poll's cache rather than
+        queried on demand: the caller is a Tk-thread refresh and must not
+        block on an HTTP round trip. Polling stops when the connection
+        drops, so — like the position readout beside it — this then holds
+        the last known pointing.
+        """
+        return self._mount_j2000
 
     def slew_to(self, name, ra_deg, dec_deg):
         """Public goto — also called by the explorer's catalogue browsers.

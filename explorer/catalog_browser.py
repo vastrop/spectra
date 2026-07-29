@@ -4,8 +4,9 @@ Each concrete dialog (be_star_dialog, wr_star_dialog, quasar_dialog)
 supplies its VizieR fetch, its column layout and its tracked CSV under
 ReferenceLibrary/; this module owns everything catalogue-agnostic: the CSV
 load/regenerate cycle, the sortable zebra-striped Treeview, the display-time
-JNOW and live Alt/Az columns, the SIMBAD TAP TYC/TIC crossmatch, and the
-standalone --refresh/--selfcheck CLI shared by all of them.
+JNOW, live Alt/Az and slew-distance columns, the SIMBAD TAP TYC/TIC
+crossmatch, and the standalone --refresh/--selfcheck CLI shared by all of
+them.
 
 Check:    py -3.13 explorer/catalog_browser.py
 """
@@ -38,6 +39,14 @@ SCHEDULER_PATH = os.path.join(DATA_ROOT, "scheduler_targets.txt")
 DEFAULT_LAT, DEFAULT_LON = 45.0, 0.0
 MIN_ALT_DEG = 30.0   # fixed visibility threshold; make it a field in the
                      # filter bar if it ever needs tuning per target
+# Where the Slew° column gets the mount's pointing: a zero-argument callable
+# returning J2000 (ra_deg, dec_deg), or None when no mount is reachable. Set
+# by the explorer, which owns the NINA remote; left None when a browser runs
+# standalone, and the column then stays blank. A module hook rather than a
+# per-dialog argument because there is one rig per application, and the nine
+# catalogue dialogs would otherwise each have to forward a second callback
+# they make no use of themselves.
+mount_position = None
 
 
 def reference_csv(name):
@@ -188,6 +197,24 @@ def current_altaz(rows, lat_deg, lon_deg, when=None):
                       [float(r["dec_deg"]) for r in rows], unit="deg")
     aa = coords.transform_to(AltAz(obstime=ref, location=loc))
     return [(float(a), float(z)) for a, z in zip(aa.alt.deg, aa.az.deg)]
+
+
+def slew_distances(rows, ra_deg, dec_deg):
+    """Per-row angular distance in degrees from a pointing.
+
+    The pointing must already be J2000, the catalogues' frame: a JNOW mount
+    reads ~0.3° off it by precession alone, which would show up as a slew
+    distance for a star the rig is dead-on. The NINA panel converts before
+    handing the position over, where the epoch NINA reports is known.
+    """
+    import numpy as np
+    from astropy.coordinates import angular_separation
+
+    sep = angular_separation(
+        np.deg2rad(ra_deg), np.deg2rad(dec_deg),
+        np.deg2rad([float(r["ra_deg"]) for r in rows]),
+        np.deg2rad([float(r["dec_deg"]) for r in rows]))
+    return [float(v) for v in np.rad2deg(sep)]
 
 
 def warm_coordinates():
@@ -454,8 +481,9 @@ def build_browser(container, rows, columns, headings, sort="vmag",
     "Visible now", a shown-count label, "Schedule
     selected" (appends to the scheduler_targets.txt outbox, multi-select
     aware) and — when a ``goto`` callback is given — the "Goto selected"
-    button. Live Alt°/Az° and night-max Culm° columns are appended to
-    every layout.
+    button. Live Alt°/Az°, night-max Culm° and Slew° (distance from the
+    mount's current pointing, via the ``mount_position`` hook) columns are
+    appended to every layout.
     """
     from tkinter import messagebox
 
@@ -492,6 +520,17 @@ def build_browser(container, rows, columns, headings, sort="vmag",
         for row, culm in zip(rows, altitudes_for(lat, lon)):
             row["culm"] = f"{culm:.0f}"
 
+    def fill_slew():
+        # Blank, not stale, when the rig is unreachable: a distance left over
+        # from the last connection reads exactly like a live one.
+        pos = mount_position() if mount_position is not None else None
+        if pos is None:
+            for row in rows:
+                row["slew"] = ""
+            return
+        for row, sep in zip(rows, slew_distances(rows, *pos)):
+            row["slew"] = f"{sep:.1f}"
+
     # Alt/Az are the live position — current during darkness, else at the
     # coming dusk — refreshed every minute below. The visibility filter
     # deliberately stays on the night-max ("clears the bar at some point
@@ -502,9 +541,15 @@ def build_browser(container, rows, columns, headings, sort="vmag",
         print(f"Alt/Az columns unavailable: {exc}")
         for row in rows:
             row["alt"] = row["az"] = row["culm"] = ""
-    columns = tuple(columns) + ("alt", "az", "culm")
+    try:
+        fill_slew()
+    except Exception as exc:
+        print(f"Slew° column unavailable: {exc}")
+        for row in rows:
+            row["slew"] = ""
+    columns = tuple(columns) + ("alt", "az", "culm", "slew")
     headings = {**headings, "alt": ("Alt°", 50), "az": ("Az°", 50),
-                "culm": ("Culm°", 55)}
+                "culm": ("Culm°", 55), "slew": ("Slew°", 55)}
 
     tree, set_rows, row_of = populate(container, rows, columns, headings,
                                       sort=sort)
@@ -545,6 +590,9 @@ def build_browser(container, rows, columns, headings, sort="vmag",
             return
         try:
             fill_altaz(float(v_lat.get()), float(v_lon.get()))
+            # The mount moves between ticks (and the NINA panel may only now
+            # have connected), so the distances are recomputed, not cached.
+            fill_slew()
             # Spec counts go stale the moment a livestack is added to the
             # DB with the browser open — re-query along with the minute
             # tick (one SQL read + sparse position match, cheap).
@@ -555,6 +603,7 @@ def build_browser(container, rows, columns, headings, sort="vmag",
                 tree.set(iid, "alt", row["alt"])
                 tree.set(iid, "az", row["az"])
                 tree.set(iid, "culm", row["culm"])   # hourly cache rollover
+                tree.set(iid, "slew", row["slew"])
                 if "nspec" in columns:
                     tree.set(iid, "nspec", row["nspec"])
             # "Visible now" membership turns with the sky, so it has to be
@@ -794,6 +843,19 @@ def _selfcheck():
         alt, az = current_altaz(targets[:1], lat, lon, when=when)[0]
         assert abs(alt - lat) < 2.0, (when.iso, alt)
         assert min(az, 360.0 - az) < 2.0, (when.iso, az)
+
+    # Slew distance: zero on the pointing, a pure declination offset reads
+    # as itself, and an RA offset is the real great-circle distance — 20° of
+    # RA at dec +20 is 18.8°, not 20°, and it is measured the short way
+    # round through 0h.
+    here = [{"ra_deg": "10.0", "dec_deg": "20.0"},
+            {"ra_deg": "10.0", "dec_deg": "80.0"},
+            {"ra_deg": "350.0", "dec_deg": "20.0"}]
+    dist = slew_distances(here, 10.0, 20.0)
+    assert dist[0] < 1e-9, dist
+    assert abs(dist[1] - 60.0) < 1e-6, dist
+    assert 18.7 < dist[2] < 18.9, dist
+    assert slew_distances([], 0.0, 0.0) == []
 
     # Scheduler outbox: header once, name-dedup on re-send, JNOW + J2000
     # fields land tab-separated and parsable.

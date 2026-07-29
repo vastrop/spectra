@@ -4477,7 +4477,19 @@ class SpectrumExplorer(tk.Tk):
             existing.lift()
             existing.focus_force()
             return
+        # Where the browsers' Slew° column reads the mount from; set here
+        # rather than passed in so the nine dialogs need not forward it.
+        catalog_browser.mount_position = self._nina_mount_pos
         setattr(self, attr, factory(self, goto=self._nina_goto))
+
+    def _nina_mount_pos(self):
+        """Catalogue-browser slew distances: the NINA panel's last polled
+        pointing (J2000 degrees), or None when the panel is closed — the
+        column then blanks rather than quoting a distance from nowhere."""
+        dlg = self._nina_dialog
+        if dlg is None or not dlg.winfo_exists():
+            return None
+        return dlg.mount_j2000()
 
     def _nina_goto(self, name, ra_deg, dec_deg):
         """Catalogue-browser goto: slew the rig to a target (J2000 degrees).
