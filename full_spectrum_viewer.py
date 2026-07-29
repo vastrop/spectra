@@ -35,6 +35,7 @@ from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 
 import tooltip_help as tt
+from line_overlay import LineOverlayPanel
 from spectrum_core import (
     wavelength_to_rgb,
     rainbow_fill,
@@ -113,8 +114,19 @@ class FullSpectrumDialog(tk.Toplevel):
         self.ax_corr = None   # continuum-corrected (None when no anchors)
         self.ax_lum = None    # luminance strip
 
-        self.canvas = FigureCanvasTkAgg(self.fig, master=self)
-        self.canvas.get_tk_widget().pack(side="top", fill="both", expand=True)
+        # Canvas and annotation column share a row, so the column spans the
+        # full height of the plot stack rather than the whole window.
+        body = tk.Frame(self, bg=BG)
+        body.pack(side="top", fill="both", expand=True)
+
+        # Annotation overlay — presentation-only, additive, and discarded
+        # when this window closes.  It never writes back to the parent's
+        # reference-line toggles, which stay the persistent choice.
+        self.lines_panel = LineOverlayPanel(body, on_change=self.refresh)
+        self.lines_panel.pack(side="right", fill="y", padx=(8, 10), pady=(4, 4))
+
+        self.canvas = FigureCanvasTkAgg(self.fig, master=body)
+        self.canvas.get_tk_widget().pack(side="left", fill="both", expand=True)
 
         tb_frame = tk.Frame(self, bg=BG)
         tb_frame.pack(side="top", fill="x")
@@ -575,10 +587,15 @@ class FullSpectrumDialog(tk.Toplevel):
         # dispersion=1.0 makes the helper plot at xpix = wl/1 = wl.
         cal_ymax = float(np.nanmax(norm_int)) if len(norm_int) else 1.0
         _cal_p = dict(p, dispersion=1.0)
-        self.parent._draw_reference_line_groups(
+        group_wls = self.parent._draw_reference_line_groups(
             _cal_p, cal_ymax, ax=self.ax,
             force_linear=True, fontsize=12,
         )
+
+        # Annotation overlay on top, skipping whatever the groups above
+        # already marked so a line the user has on both ways is not
+        # labelled twice at the same x.
+        self.lines_panel.draw(self.ax, cal_ymax, skip=group_wls, fontsize=12)
 
         # Calibration node markers — driven by the parent's "Show
         # calibration lines" toggle in the right pane.

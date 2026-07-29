@@ -3170,11 +3170,28 @@ def best_y_shift(x, y, rotated_data, spectrum_width, aperture_half_height,
 # ---------------------------------------------------------------------------
 
 
+# Label heights for reference lines, as multipliers of y_max.  Neighbours
+# that would collide step up a level instead of overprinting each other.
+# Three levels covers the densest real case (a multiplet inside ~100 Å);
+# past that the labels overlap again, which is the honest cue that too
+# many groups are switched on at once.
+LABEL_LEVELS = (1.01, 1.10, 1.19)
+
+# How close two labels may sit before the second is bumped up a level,
+# as a fraction of the visible x-range.  A fixed fraction rather than a
+# points-to-data conversion because the panels differ in both font size
+# (6 inline, 12 in the full viewer) and axis width, and the two effects
+# very nearly cancel.
+# ponytail: measure it off ax.get_window_extent() if a third panel with a
+# different aspect ever breaks that coincidence.
+LABEL_MIN_GAP_FRAC = 0.012
+
+
 def plot_reference_lines(ax, lines, dispersion, y_max,
                          poly_coeffs=None, n_pixels=None,
-                         colour="#ff6060", fontsize=5):
+                         colour="#ff6060", fontsize=5, linestyle="--"):
     """
-    Draw vertical dashed reference lines on a pixel-axis spectrum plot.
+    Draw vertical reference lines on a pixel-axis spectrum plot.
 
     Parameters
     ----------
@@ -3194,6 +3211,10 @@ def plot_reference_lines(ax, lines, dispersion, y_max,
         omitted.
     colour : str
         Colour for both lines and labels.
+    linestyle : str
+        Rule style.  Dashed for the catalogue groups; callers drawing
+        user-picked annotation lines pass a solid style so the two
+        remain distinguishable on the same axes.
 
     Read the current axis x-range so out-of-view lines are dropped
     entirely (rather than relying on clip_on, which still leaves the
@@ -3202,6 +3223,9 @@ def plot_reference_lines(ax, lines, dispersion, y_max,
     sitting exactly on the axis edge — where its label would spill
     off — is also suppressed.
 
+    Staggering is per call, so two groups enabled at once can still
+    collide with each other; within one group — where crowding actually
+    bites — the labels stay readable.
     """
     xlo, xhi = ax.get_xlim()
     if xhi < xlo:    # axis may be inverted; normalise
@@ -3210,12 +3234,9 @@ def plot_reference_lines(ax, lines, dispersion, y_max,
     xlo += inset
     xhi -= inset
 
-    # Expand the y-axis so the labels do not overlap the spectrum: the text
-    # needs room above y_max, and 1.25 * y_max is a safe margin for it.
-    ylo, _ = ax.get_ylim()
-    if ax.get_ylim()[1] < 1.25 * y_max:
-        ax.set_ylim(ylo, 1.25 * y_max)
-
+    # Resolve positions before drawing anything: the stagger needs the
+    # lines in x-order, and the headroom depends on how high it climbs.
+    placed = []
     for wl, label in lines.items():
         if poly_coeffs is not None:
             xpix = invert_poly_to_pixel(wl, dispersion, poly_coeffs, n_pixels)
@@ -3223,10 +3244,35 @@ def plot_reference_lines(ax, lines, dispersion, y_max,
             xpix = wl / dispersion
         if xpix is None or not (xlo <= xpix <= xhi):
             continue
+        placed.append((xpix, label))
+    if not placed:
+        return
+    placed.sort()
+
+    min_gap = LABEL_MIN_GAP_FRAC * (xhi - xlo)
+    levels = []
+    level = 0
+    prev_x = None
+    for xpix, _label in placed:
+        # Drop back to the baseline as soon as there is room, so an
+        # isolated line is never parked high for no visible reason.
+        level = 0 if (prev_x is None or xpix - prev_x >= min_gap) \
+            else (level + 1) % len(LABEL_LEVELS)
+        levels.append(level)
+        prev_x = xpix
+
+    # Expand the y-axis so the labels do not overlap the spectrum: the
+    # text needs about 0.24 * y_max of room above its anchor.
+    top = LABEL_LEVELS[max(levels)] + 0.24
+    ylo, ycur = ax.get_ylim()
+    if ycur < top * y_max:
+        ax.set_ylim(ylo, top * y_max)
+
+    for (xpix, label), lvl in zip(placed, levels):
         # ymax=0.8 stops the rule short of the label text above it.
-        ax.axvline(x=xpix, color=colour, linestyle="--", linewidth=0.8, alpha=0.5, ymax=0.8)
-        # 1.01 * y_max places the label in the headroom opened above.
-        ax.text(xpix, y_max * 1.01, label, rotation=90,
+        ax.axvline(x=xpix, color=colour, linestyle=linestyle,
+                   linewidth=0.8, alpha=0.5, ymax=0.8)
+        ax.text(xpix, y_max * LABEL_LEVELS[lvl], label, rotation=90,
                 va="bottom", ha="center", color=colour, fontsize=fontsize,
                 clip_on=True)
 

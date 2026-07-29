@@ -5471,6 +5471,13 @@ class SpectrumExplorer(tk.Tk):
             • the calibrated panel, whose x-axis is already in Å — there the
               caller also passes ``dispersion=1.0`` so lines land at
               xpix = wl.
+
+        Returns
+        -------
+        set of float
+            The wavelengths of the enabled groups.  The full-spectrum
+            viewer's annotation overlay uses it to avoid stacking a
+            second label on a line the user already has switched on.
         """
         if ax is None:
             ax = self.ax_raw
@@ -5487,6 +5494,7 @@ class SpectrumExplorer(tk.Tk):
             (self.v_wr_wn_lines,       WR_WN_LINES,       "#7ecfff"),
             (self.v_wr_wc_lines,       WR_WC_LINES,       "#ffb870"),
         ]
+        drawn = set()
         for var, lines, colour in groups:
             if var.get():
                 plot_reference_lines(
@@ -5494,6 +5502,8 @@ class SpectrumExplorer(tk.Tk):
                     poly_coeffs=poly, n_pixels=n_pixels, colour=colour,
                     fontsize=fontsize,
                 )
+                drawn.update(lines)
+        return drawn
 
     def _refresh_full_spec_dialog(self):
         """

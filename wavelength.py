@@ -20,7 +20,10 @@ series).  Telluric bands are quoted at their conventional band-centre.
 Wolf-Rayet C III/C IV blends are tagged as such; the wavelength is the
 conventional blend centroid used for ID, not a single transition.
 
-Each line is (wavelength_A, label, quickpick).
+Each line is (wavelength_A, label, quickpick) with an optional fourth
+element naming a subgroup — a multiplet, a series, an ion — for the
+overlay tree to nest under.  Omit it and the line hangs directly off its
+group.  Consumers unpack with ``*_`` so both shapes read.
 """
 
 SPECTRAL_LINES = {
@@ -104,38 +107,38 @@ SPECTRAL_LINES = {
         "colour": "#7ecfff",   # cool blue — ionised nitrogen / hot plasma
         "lines": [
             # He II — classification ratios and strongest lines in WN spectra
-            (4685.7, "He II 4686",  True),   # dominant WN emission; WR bump centre
-            (5411.5, "He II 5411",  True),   # WN subtype: He II 5411 / He I 5876 ratio
+            (4685.7, "He II 4686",  True,  "He II"),   # dominant WN emission; WR bump centre
+            (5411.5, "He II 5411",  True,  "He II"),   # WN subtype: He II 5411 / He I 5876 ratio
             # N III doublet — blue-bump WN component; late WN (WN6–9)
-            (4634.0, "N III 4634",  True),   # Crowther et al. 2022 λλ4634,41
-            (4641.0, "N III 4641",  True),
+            (4634.0, "N III 4634",  True,  "N III"),   # Crowther et al. 2022 λλ4634,41
+            (4641.0, "N III 4641",  True,  "N III"),
             # N IV — prominent in intermediate WN subtypes
-            (4057.76, "N IV 4058",  False),  # also seen in WN/C transition stars
-            (7109.0, "N IV 7109",   False),  # useful red anchor; classif. diagnostic
+            (4057.76, "N IV 4058",  False, "N IV"),    # also seen in WN/C transition stars
+            (7109.0, "N IV 7109",   False, "N IV"),    # useful red anchor; classif. diagnostic
             # N V doublet — early / hot WN (WN2–5); weak or absent in late WN
-            (4603.0, "N V 4603",    False),  # Crowther et al. 2022 λλ4603,20
-            (4619.0, "N V 4619",    False),
+            (4603.0, "N V 4603",    False, "N V"),     # Crowther et al. 2022 λλ4603,20
+            (4619.0, "N V 4619",    False, "N V"),
             # He I — present in late WN stars (cooler subtypes)
-            (5875.6, "He I 5876",   False),  # WN subtype denominator (Smith 1996)
+            (5875.6, "He I 5876",   False, "He I"),    # WN subtype denominator (Smith 1996)
         ],
     },
     "Wolf-Rayet WC": {
         "colour": "#ffb870",   # warm orange — carbon-rich winds
         "lines": [
             # C III — the defining WC diagnostic; absent in WN stars
-            (5696.0, "C III 5696",     True),   # Paris Obs. dict.; Royer et al. 1998
+            (5696.0, "C III 5696",     True,  "C III"),   # Paris Obs. dict.; Royer et al. 1998
             # C III / C IV blue bump — strong in WC; overlaps the WN He II bump
-            (4647.0, "C III 4647",     True),   # Crowther et al. 2022 λλ4647,51
-            (4651.0, "C III 4651",     False),
-            (4658.0, "C IV 4658",      False),  # blends with C III in the 4650 complex
+            (4647.0, "C III 4647",     True,  "C III"),   # Crowther et al. 2022 λλ4647,51
+            (4651.0, "C III 4651",     False, "C III"),
+            (4658.0, "C IV 4658",      False, "C IV"),    # blends with C III in the 4650 complex
             # C IV yellow/red bump — WC classifier (EW ratio with blue bump)
-            (5801.0, "C IV 5801",      True),   # Crowther et al. 2022 λλ5801,12
-            (5812.0, "C IV 5812",      False),
+            (5801.0, "C IV 5801",      True,  "C IV"),    # Crowther et al. 2022 λλ5801,12
+            (5812.0, "C IV 5812",      False, "C IV"),
             # He II — present in WC, usually weaker than in WN
-            (4685.7, "He II 4686",     False),  # blends with C IV 4658 complex
-            (5411.5, "He II 5411",     False),
+            (4685.7, "He II 4686",     False, "He II"),   # blends with C IV 4658 complex
+            (5411.5, "He II 5411",     False, "He II"),
             # O III — present in late WC (WC7–9); used for WC/WO discrimination
-            (5592.0, "O III 5592",     False),
+            (5592.0, "O III 5592",     False, "O III"),
         ],
     },
     # ── Herbig Ae/Be ───────────────────────────────────────────────────
@@ -189,7 +192,7 @@ def flatten_group(group_name):
     overlay (via the legacy dicts) and the calibration dialog quick-pick
     (which reads SPECTRAL_LINES directly).
     """
-    return {wl: label for wl, label, _qp in SPECTRAL_LINES[group_name]["lines"]}
+    return {wl: label for wl, label, *_ in SPECTRAL_LINES[group_name]["lines"]}
 
 
 # Legacy flat dicts — derived from SPECTRAL_LINES so adding a line in one

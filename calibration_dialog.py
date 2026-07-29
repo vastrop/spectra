@@ -581,7 +581,7 @@ class CalibrationDialog(tk.Toplevel):
         LABEL_W = 11
 
         for group_name, group in SPECTRAL_LINES.items():
-            picks = [(wl, label) for wl, label, qp in group["lines"] if qp]
+            picks = [(wl, label) for wl, label, qp, *_ in group["lines"] if qp]
             if not picks:
                 continue
             row = tk.Frame(qp_container, bg=BG)
