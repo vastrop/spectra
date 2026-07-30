@@ -24,6 +24,17 @@ gaussian PSF tinted with the star's blackbody colour from a Planck fit
 generated posters are remembered recent-files-style in a JSON sidecar
 next to the DB; clicking one re-ticks its stars and restores its text.
 
+"Full spectrum…" opens the explorer's own ``FullSpectrumDialog`` on the
+selected spectrum, at the size it gets there — the browser's panel shares
+its window with the tree, the note and the poster fields, which is no
+place to read annotations off.  The viewer takes its data from its parent
+rather than from arguments, so ``_ViewerHost`` presents a stored spectrum
+in the shape it expects; one window is re-pointed rather than a new one
+opened per press.  Continuum anchors and dispersion nodes do not exist
+here, so it comes up in its 2-row form with the ANNOTATE column, the
+luminance strip, the ±2σ band (when the samples carry sigma) and its
+FITS/PNG exports.
+
 Right below the plot, an info-card panel shows the
 ``ReferenceLibrary/notes/<stem>.md`` card matching the selected star's
 spectral type (single-star selections only).  Types without their own
@@ -85,6 +96,7 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import numpy as np
 
 from db import spectra_db
+from full_spectrum_viewer import FullSpectrumDialog
 from spectrum_core import rainbow_fill, wavelength_to_rgb
 
 # Palette — matches the rest of the application's chrome.
@@ -167,6 +179,47 @@ def load_samples(conn, spectrum_id: int):
         "WHERE spectrum_id = ? AND cal_flux IS NOT NULL "
         "ORDER BY pixel", (spectrum_id,)).fetchall()
     return [r[0] for r in rows], [r[1] for r in rows]
+
+
+def load_sigma(conn, spectrum_id: int):
+    """Per-sample cal_sigma, row-aligned with load_samples, or None.
+
+    Same filter and order as load_samples so the two arrays index
+    together; a stored None becomes NaN rather than shortening the array,
+    which is what the viewer's ±2σ band expects of a gap.  None when the
+    spectrum carries no sigma at all — then the band toggle stays off
+    instead of shading a row of zeros.
+    """
+    rows = conn.execute(
+        "SELECT cal_sigma FROM samples WHERE spectrum_id = ? "
+        "AND cal_flux IS NOT NULL ORDER BY pixel", (spectrum_id,)).fetchall()
+    if not any(r[0] is not None for r in rows):
+        return None
+    return [float("nan") if r[0] is None else float(r[0]) for r in rows]
+
+
+def capture_info(conn, spectrum_id: int):
+    """(total_exposure_s, n_frames) behind one spectrum; (None, 0) if unknown.
+
+    A livestack's numbers live in the run's config snapshot, not on the
+    dataset row: that row describes the autosaved stack file, and only the
+    snapshot says how many frames went into it.  A single frame has just
+    the dataset's own exptime_s and no frame count.
+    """
+    row = conn.execute(
+        "SELECT d.exptime_s, r.config_json FROM spectra s "
+        "JOIN runs r ON r.run_id = s.run_id "
+        "JOIN datasets d ON d.dataset_id = r.dataset_id "
+        "WHERE s.spectrum_id = ?", (spectrum_id,)).fetchone()
+    if row is None:
+        return None, 0
+    total, config = row[0], row[1]
+    try:
+        stack = (json.loads(config) or {}).get("livestack") or {}
+    except (TypeError, ValueError):
+        stack = {}          # a run without a parseable snapshot still has
+    total = stack.get("total_exptime_s") or total   # the dataset exposure
+    return (float(total) if total else None), int(stack.get("n_frames") or 0)
 
 
 def delete_spectrum(db_path: str, spectrum_id: int) -> None:
@@ -1027,6 +1080,80 @@ def render_poster(png_path: str, entries: list, title: str,
 # GUI
 # ---------------------------------------------------------------------------
 
+class _ViewerHost(tk.Frame):
+    """Stand-in "parent" for the explorer's full-spectrum viewer.
+
+    ``FullSpectrumDialog`` reads its data off its parent — the explorer's
+    live extraction state — rather than through arguments, so showing a
+    stored spectrum in it means presenting that same handful of
+    attributes.  A never-mapped Frame, because a Toplevel needs a real
+    widget as its master; it owns no connection, and nothing here writes
+    back to the database.
+
+    What the DB cannot offer stays empty instead of faked: no continuum
+    anchors (there is no anchor picker in the browser, so the viewer drops
+    its corrected panel), no dispersion polynomial and no calibration
+    nodes — a stored spectrum is already in Ångström, which is exactly
+    what the viewer's force_linear path assumes.
+    """
+
+    def __init__(self, master):
+        super().__init__(master)
+        self._calibrated_wls = None
+        self._calibrated_flux = None
+        self._calibrated_sigma = None
+        # Frame scatter is measured while a livestack runs and is not
+        # stored per sample, so that band stays unavailable here.
+        self._calibrated_sigma_frames = None
+        self._last_p = None
+        self.column_sums = None
+        self.continuum_anchors = []
+        self.dispersion_nodes = []
+        self._simbad_open_id = None
+        self._target_header = None
+        self._frame_override = None
+        self._stack_count = 0
+        self._stack_total_exp = 0.0
+        self.v_target = tk.StringVar(master=self)
+        self._full_spec_dialog = None
+
+    def load(self, name, wls, flux, sigma=None, exptime_s=None, n_frames=0):
+        """Point the host at one stored spectrum, ready to open or refresh."""
+        wls = np.asarray(wls, dtype=float)
+        self._calibrated_wls = wls
+        self._calibrated_flux = np.asarray(flux, dtype=float)
+        self._calibrated_sigma = (None if sigma is None
+                                  else np.asarray(sigma, dtype=float))
+        # sp_min/sp_max are the viewer's x-window: a stored spectrum is its
+        # own window.  target names the FITS/PNG export file; dispersion is
+        # replaced by the viewer itself for the reference-line call.
+        self._last_p = {"target": name, "dispersion": 1.0,
+                        "sp_min": float(np.nanmin(wls)),
+                        "sp_max": float(np.nanmax(wls))}
+        self.v_target.set(name)
+        # The viewer titles itself from the identity first, so the star's
+        # name lands there rather than a file path it has no use for.
+        self._simbad_open_id = name
+        self._target_header = {"EXPTIME": exptime_s} if exptime_s else None
+        self._stack_total_exp = exptime_s or 0.0
+        self._stack_count = n_frames
+        # A frame count is what marks the exposure as a stack: the viewer
+        # reads the running total only when a livestack frame is in play.
+        self._frame_override = True if n_frames > 1 else None
+
+    def get_dispersion_poly(self):
+        return None
+
+    def _validate_dispersion_poly(self, poly, n_pixels):
+        return None
+
+    def _draw_reference_line_groups(self, *args, **kwargs):
+        """No persistent catalogue-group toggles in the browser — the
+        viewer's own ANNOTATE column is the annotation path here.  Returns
+        the wavelengths it drew, i.e. none."""
+        return []
+
+
 class SpectraBrowser(tk.Tk):
 
     def __init__(self, db_path: str = spectra_db.DEFAULT_DB_PATH):
@@ -1047,6 +1174,7 @@ class SpectraBrowser(tk.Tk):
         self._samples_cache = {}     # {spectrum_id: (wls, flux)}
         self._exclusions_cache = {}  # {spectrum_id: [zone dicts]}
         self._editor = None          # single-instance exclusion editor
+        self._viewer_host = None     # parent stand-in for the full viewer
         self._legend_by_iid = {}     # {tree iid: legend label}
         # otype rides along because novae and supernovae have no spectral
         # type to match on — their card is keyed on the object type.
@@ -1133,6 +1261,7 @@ class SpectraBrowser(tk.Tk):
             return b
 
         btn("Refresh", self._refresh)
+        btn("Full spectrum…", self._show_full_spectrum)
         btn("Delete spectra…", self._delete_selected)
         btn("Delete duplicates…", self._delete_duplicates)
         btn("Merge DB…", self._merge_db)
@@ -1803,6 +1932,52 @@ class SpectraBrowser(tk.Tk):
             f"{name} · {self._legend_by_iid.get(iids[0], '')}",
             on_change=self._exclusions_changed)
 
+    def _show_full_spectrum(self):
+        """Open the explorer's full-size viewer on the selected spectrum.
+
+        The browser's own panel is a thumbnail sharing its window with the
+        tree, the note and the poster fields; this is the same spectrum at
+        the size the explorer gives it, with the annotation column, the
+        luminance strip, the ±2σ band and the FITS/PNG exports that come
+        with it.  Exclusion zones are applied first, so what opens is what
+        the browser plots.
+        """
+        iids = self._selected_spectrum_iids()
+        if len(iids) != 1:
+            messagebox.showinfo(
+                "Full spectrum", "Select exactly one spectrum (or a star "
+                                 "with a single spectrum) first.")
+            return
+        spectrum_id = int(iids[0].split("-", 1)[1])
+        loaded = self._load_series(spectrum_id)
+        if loaded is None:
+            return                     # _load_series has already said why
+        wls, flux, _spans = loaded
+        _sid, name, _sp, _ot = self._star_by_iid.get(
+            iids[0], (None, f"spectrum {spectrum_id}", "", ""))
+        try:
+            sigma = load_sigma(self._conn, spectrum_id)
+            exptime_s, n_frames = capture_info(self._conn, spectrum_id)
+        except Exception as exc:       # noqa: BLE001 — extras, not the data
+            sigma, exptime_s, n_frames = None, None, 0
+            self._status(f"σ / exposure unread: {exc}")
+
+        if self._viewer_host is None:
+            self._viewer_host = _ViewerHost(self)
+        host = self._viewer_host
+        host.load(name, wls, flux, sigma, exptime_s, n_frames)
+        dlg = host._full_spec_dialog
+        # One viewer window, re-pointed: pressing the button with another
+        # spectrum selected refreshes that window (it re-titles itself on
+        # every render) rather than stacking near-identical copies.
+        if dlg is not None and dlg.winfo_exists():
+            dlg.refresh()
+            dlg.lift()
+            dlg.focus_force()
+        else:
+            host._full_spec_dialog = FullSpectrumDialog(host)
+        self._status(f"Full spectrum: {name}")
+
     def _selected_single_star(self):
         sel = [i for i in self.tree.selection() if i.startswith("star-")]
         if len(sel) != 1:
@@ -2225,6 +2400,32 @@ def _selfcheck():
 
         wls, flux = load_samples(ro, r1["spectrum_id"])
         assert wls == [4000.0] and flux == [0.5]     # NULL cal row excluded
+        # load_sigma shares that row filter, so it indexes with flux — and
+        # this run recorded no exposure at all, snapshot or dataset.
+        assert load_sigma(ro, r1["spectrum_id"]) == [0.01]
+        assert capture_info(ro, r1["spectrum_id"]) == (None, 0)
+
+        # A livestack in its own DB: the run snapshot's total wins over the
+        # dataset's per-frame exposure and brings the frame count with it.
+        # Samples with no sigma give None, which is what keeps the viewer's
+        # ±2σ toggle off instead of shading a row of zeros.
+        stack_path = os.path.join(td, "stack.db")
+        sconn = spectra_db.connect(stack_path)
+        sid = spectra_db.ingest_spectrum(
+            sconn, star=star,
+            dataset=dict(fits_path="livestacked", fits_sha256="s9",
+                         exptime_s=30.0),
+            run=dict(run_utc="2026-07-30T00:00:00+00:00",
+                     config_json=json.dumps({"livestack": {
+                         "n_frames": 18, "total_exptime_s": 540.0}})),
+            spectrum=spec,
+            samples=[(0, 1.0, 4000.0, 0.5, None, 0)])["spectrum_id"]
+        sconn.close()
+        sro = spectra_db.connect(stack_path, readonly=True)
+        assert capture_info(sro, sid) == (540.0, 18), capture_info(sro, sid)
+        assert load_sigma(sro, sid) is None
+        assert capture_info(sro, 9999) == (None, 0)   # no such spectrum
+        sro.close()
 
         # Whole-run delete: one dup goes, its run goes, dataset s1 stays
         # (still referenced by the other dup) — and its exclusion zones
