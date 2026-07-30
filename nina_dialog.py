@@ -758,6 +758,11 @@ class NinaDialog(tk.Toplevel):
                 # its own; the LED and the line tell the truth meanwhile.
                 self._q.put(("status", f"Lost contact: {e}"))
                 self._q.put(("led", False))
+                # The pointing does not survive the blackout, though: the
+                # catalogue browsers' Slew° column promises a blank rather
+                # than a distance measured from wherever the rig was last
+                # seen. The next good poll refills it within seconds.
+                self._q.put(("mount_j2000", None))
             finally:
                 self._q.put(("poll_done",))
 
@@ -1017,9 +1022,12 @@ class NinaDialog(tk.Toplevel):
         (ra_deg, dec_deg) in J2000, or None before the first successful
         mount read. Served from the 5 s status poll's cache rather than
         queried on demand: the caller is a Tk-thread refresh and must not
-        block on an HTTP round trip. Polling stops when the connection
-        drops, so — like the position readout beside it — this then holds
-        the last known pointing.
+        block on an HTTP round trip.
+
+        A failed poll clears it, unlike the position readout beside it: the
+        readout is labelled as the last thing NINA said, whereas a slew
+        distance computed from a stale pointing is indistinguishable from a
+        live one. Blank until contact recovers is the honest answer.
         """
         return self._mount_j2000
 
@@ -1701,6 +1709,38 @@ def _selfcheck():
             assert f.read() == b"third"
         assert sorted(os.listdir(d)) == ["snap.fits", "snap_1.fits",
                                          "snap_2.fits"]
+
+    # The focus-run interlock has to stop the run BEFORE it commits to a slew:
+    # _toggle_autofocus' identical check is only reached on arrival, which is
+    # how a nudge in flight used to cost two slews and a guiding session.
+    # Reaching _selected_astar is the tell — everything that moves the mount is
+    # past it.  _mount_busy is the real one, since its blindness to _foc_thread
+    # is deliberate (a nudge and a slew do not conflict) and is what leaves
+    # this gate load-bearing.
+    def _no_selection():
+        reached.append(True)
+        return None             # stops the run before the slew either way
+
+    def _dialog(foc_thread):
+        d = types.SimpleNamespace(
+            _af_thread=None, _cap_thread=None, _mount_thread=None,
+            _foc_thread=foc_thread, _selected_astar=_no_selection)
+        d._mount_busy = lambda action: NinaDialog._mount_busy(d, action)
+        return d
+
+    told, reached = [], []
+    this = sys.modules[__name__]
+    real_messagebox = this.messagebox
+    this.messagebox = types.SimpleNamespace(
+        showinfo=lambda title, *a, **k: told.append(title))
+    try:
+        NinaDialog._focus_run(_dialog(threading.Thread()))
+        assert not reached, "a focus run slewed with a nudge in flight"
+        assert told == ["Busy"], told        # and said why
+        NinaDialog._focus_run(_dialog(None))
+        assert reached == [True], "the gate blocks a run with the focuser free"
+    finally:
+        this.messagebox = real_messagebox
 
     print("nina_dialog self-check OK")
 
