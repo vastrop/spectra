@@ -59,7 +59,8 @@ read-write connection:
   isn't worth it for an occasional curation action);
 * re-identify a star against SIMBAD from its stored position, with a
   user-chosen cone radius (bloated / saturated stars can need a much
-  wider cone than the capture-time default before SIMBAD finds them).
+  wider cone than the capture-time default before SIMBAD finds them)
+  and a pick of which of SIMBAD's names becomes the display label.
   Reuses ``source_identification.query_position``;
 * edit a spectrum's exclusion zones (``SpectrumEditor``: drag a
   wavelength box over a polluting star, choose mask / interpolate /
@@ -425,16 +426,42 @@ def sp_filter_match(sp_type: str | None, flt: str) -> bool:
     return letter == flt
 
 
-def apply_identity(db_path: str, star_id: int, match) -> str | None:
+def identity_choices(match) -> list[str]:
+    """Display-label candidates from a SourceMatch, best guess first.
+
+    Which of SIMBAD's names is the right one depends on why you are
+    looking: WR 136, V1770 Cyg and HD 192163 are one star to three
+    different observers, and no heuristic can know which you meant.  So
+    the automatic pick leads and the rest of the identifier list follows.
+    SIMBAD's packaging prefixes ("NAME ", "V* ") are display noise, and
+    stripping them is also what makes the automatic pick dedupe against
+    the identifier it was derived from.
+    """
+    out = []
+    for cid in [match.label, match.main_id, *(match.all_ids or [])]:
+        name = " ".join((cid or "").split())
+        for prefix in ("NAME ", "V* "):
+            if name.upper().startswith(prefix):
+                name = name[len(prefix):]
+        if name and name not in out:
+            out.append(name)
+    return out
+
+
+def apply_identity(db_path: str, star_id: int, match,
+                   label: str | None = None) -> str | None:
     """Overwrite a star's identity from a SIMBAD SourceMatch.
 
     Unlike ingest's NULL-only backfill this is an explicit user
     correction, so existing values are replaced — including the stored
     position (catalog position is the preferred ground truth, §1).
+    ``label`` overrides the match's own compact label with the caller's
+    pick from ``identity_choices``.
     Returns an error string when the Gaia id already belongs to another
     star row (a merge situation this basic client doesn't attempt).
     """
     gaia = spectra_db.gaia_dr3_id(match.all_ids)
+    label = match.label if label is None else label
     has_cat = match.cat_ra_deg is not None
     conn = spectra_db.connect(db_path)
     try:
@@ -442,7 +469,7 @@ def apply_identity(db_path: str, star_id: int, match) -> str | None:
             conn.execute(
                 "UPDATE stars SET gaia_dr3_source_id = ?, main_id = ?, "
                 "label = ?, sp_type = ?, otype = ? WHERE star_id = ?",
-                (gaia, match.main_id or None, match.label or None,
+                (gaia, match.main_id or None, label or None,
                  match.sp_type or None, match.otype or None, star_id))
             if has_cat:
                 conn.execute(
@@ -2051,13 +2078,15 @@ class SpectraBrowser(tk.Tk):
             self._status(f"SIMBAD: no object within {radius:.0f}″ "
                          f"(or query failed) — try a wider cone.")
             return
-        if not messagebox.askyesno(
-                "Apply identity",
-                f"SIMBAD match at {match.sep_arcsec:.1f}″:\n\n"
-                f"{match.info_text()}\n\nApply to star #{star_id}? "
-                f"(overwrites name, type and position)"):
+        chooser = _IdentityChooser(
+            self, f"SIMBAD match at {match.sep_arcsec:.1f}″:\n\n"
+                  f"{match.info_text()}\n\nApply to star #{star_id}? "
+                  f"(overwrites name, type and position)",
+            identity_choices(match))
+        if chooser.result is None:
             return
-        err = apply_identity(self._db_path, star_id, match)
+        err = apply_identity(self._db_path, star_id, match,
+                             label=chooser.result)
         if err:
             messagebox.showwarning("Not applied", err)
         self._refresh()
@@ -2192,6 +2221,45 @@ class SpectraBrowser(tk.Tk):
 # ---------------------------------------------------------------------------
 # Self-check — pure data-access layer against a synthetic DB (no GUI)
 # ---------------------------------------------------------------------------
+
+class _IdentityChooser(simpledialog.Dialog):
+    """The re-identify confirmation, with SIMBAD's names as a pick list.
+
+    Re-identification is usually an interpretative correction rather than
+    a positional one (the star is right, the *name* is the wrong one of
+    its dozen), so the choice of label belongs to the user.  ``result`` is
+    the chosen name, or None on Cancel — which also serves as the yes/no
+    this replaced.
+    """
+
+    def __init__(self, parent, info, choices):
+        self._info = info
+        self._choices = choices
+        self.result = None
+        super().__init__(parent, "Apply identity")
+
+    def body(self, master):
+        master.configure(bg=BG)
+        tk.Label(master, text=self._info, bg=BG, fg=FG, justify="left",
+                 font=("Courier New", 9), wraplength=460).pack(anchor="w")
+        tk.Label(master, text="Display name:", bg=BG, fg=ACC,
+                 font=("Courier New", 9)).pack(anchor="w", pady=(8, 2))
+        self.lst = tk.Listbox(master, height=min(12, len(self._choices)),
+                              bg=ENTRY_BG, fg=ENTRY_FG, relief="flat",
+                              selectbackground=SPINE, exportselection=False,
+                              font=("Courier New", 9))
+        for name in self._choices:
+            self.lst.insert("end", name)
+        self.lst.selection_set(0)
+        self.lst.pack(fill="both", expand=True)
+        # Double-click a name = pick it and go, same as OK.
+        self.lst.bind("<Double-Button-1>", lambda _e: self.ok())
+        return self.lst
+
+    def apply(self):
+        sel = self.lst.curselection()
+        self.result = self._choices[sel[0] if sel else 0]
+
 
 class SpectrumEditor(tk.Toplevel):
     """Exclusion-zone editor: mark wavelength ranges polluted by another
@@ -2500,6 +2568,23 @@ def _selfcheck():
         # the on-the-fly constellation follows, nothing stored.
         star2 = load_tree(ro)[0][0]
         assert star2["constellation"] == "Cas", star2["constellation"]
+
+        # The chooser's pick beats the match's own compact label; the rest
+        # of the identity still comes from the match.
+        assert apply_identity(path, _star["star_id"], FakeMatch(),
+                              label="bet Cas") is None
+        row = ro.execute("SELECT label, main_id FROM stars").fetchone()
+        assert tuple(row) == ("bet Cas", "* bet Cas"), tuple(row)
+
+        # Candidate list: automatic pick first, then the identifiers, with
+        # SIMBAD's "NAME "/"V* " packaging stripped and the pick deduped
+        # against the id it came from.
+        class WRMatch(FakeMatch):
+            main_id = "HD 192163"
+            label = "V1770 Cyg"
+            all_ids = ["NAME Crescent Nebula", "V* V1770 Cyg", "WR 136"]
+        assert identity_choices(WRMatch()) == [
+            "V1770 Cyg", "HD 192163", "Crescent Nebula", "WR 136"]
 
         # Gaia conflict with a second star → refused with a message.
         rw = spectra_db.connect(path)

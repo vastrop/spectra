@@ -80,6 +80,11 @@ WIDE_CONE_VMAX = 10.0
 # Catalog-prefix preference for the compact overlay label, best first.
 _LABEL_PREFIX_PRIORITY = ("HD", "HIP", "TYC", "HR", "BD", "SAO", "GAIA", "TIC")
 
+# Words that mark a SIMBAD proper name as the extended object around the
+# star rather than the star itself — never a label for a point source.
+_EXTENDED_NAME_WORDS = {"nebula", "cluster", "cloud", "galaxy", "complex",
+                        "region"}
+
 
 # ---------------------------------------------------------------------------
 # Result container
@@ -453,10 +458,15 @@ def _compact_label(main_id: str, all_ids: Sequence[str]) -> str:
     """Pick a short, recognisable label: common name first, then HD/HIP/TYC/…"""
     candidates = [main_id] + list(all_ids)
     # SIMBAD carries proper names as "NAME Vega" identifiers — a common
-    # name beats any catalog number for at-a-glance recognition.
+    # name beats any catalog number for at-a-glance recognition.  But it
+    # also hangs the surrounding extended object's name on its ionising
+    # star ("NAME Crescent Nebula" is an identifier of HD 192163), and
+    # labelling a WR star after its nebula is worse than a catalog number.
     for cid in candidates:
         if cid.upper().startswith("NAME "):
-            return " ".join(cid.split()[1:])
+            name = " ".join(cid.split()[1:])
+            if not _EXTENDED_NAME_WORDS & set(name.lower().split()):
+                return name
     # Variable-star designations ("V* HW Cas") are the standard GCVS-style
     # names amateurs (and LAMOST) know a variable by — rank them right
     # after proper names, ahead of any catalog number.  The "V*" prefix is
@@ -663,6 +673,9 @@ def _main(argv) -> int:
     assert _compact_label("Gaia DR3 42", ["V* HW Cas", "HD 1"]) == "HW Cas"
     assert _compact_label("Gaia DR3 42",
                           ["HDS 123", "TYC 1-2-3"]) == "TYC 1-2-3"
+    # An extended object's name on its ionising star is not the star's name.
+    assert _compact_label("HD 192163", ["NAME Crescent Nebula",
+                                        "V* V1770 Cyg"]) == "V1770 Cyg"
 
     # Pure self-check of the cone ranking: tight mode is nearest-wins with
     # V ignored; the wide-cone gate drops unknown/faint V and prefers the
