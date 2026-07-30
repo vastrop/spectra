@@ -1064,6 +1064,15 @@ class NinaDialog(tk.Toplevel):
     def _focus_run(self):
         if self._mount_busy("starting a focus run"):
             return
+        # Not in _mount_busy: a nudge does not conflict with the mount, only
+        # with autofocus. But _toggle_autofocus' identical gate is reached
+        # after the outbound slew, so without this the run detours to the A
+        # star, refuses to focus, and turns straight back — two slews and a
+        # dropped guiding session for nothing.
+        if self._foc_thread is not None:
+            messagebox.showinfo("Busy", "A manual focuser move is still "
+                                        "running.", parent=self)
+            return
         star = self._selected_astar()
         if star is None:
             return
