@@ -60,6 +60,7 @@ import queue
 import sys
 import threading
 import time
+from datetime import datetime
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
@@ -101,6 +102,10 @@ STATUS_POLL_S = 5.0
 # clears Slewing, and PHD2 locking on during them calibrates off a star that
 # is still drifting.
 GUIDE_SETTLE_S = 5.0
+# Longest exposure countdown taken at face value.  Beyond it the rig's clock
+# and ours disagree rather than the frame really being an hour out — see
+# _exposure_remaining_s.
+MAX_COUNTDOWN_S = 3600.0
 ASTAR_CATALOG = os.path.join(_ROOT, "ReferenceLibrary",
                              "astar_catalog.csv")
 
@@ -168,6 +173,38 @@ def _to_j2000(ra_deg, dec_deg, epoch):
     c = SkyCoord(ra_deg, dec_deg, unit="deg",
                  frame=FK5(equinox=Time.now())).transform_to(ICRS())
     return float(c.ra.deg), float(c.dec.deg)
+
+
+def _exposure_remaining_s(cam, now=None):
+    """Seconds left on the exposure in flight, per camera/info, or None.
+
+    NINA reports ExposureEndTime on the *rig's* wall clock, so the countdown
+    is only as good as the two machines' agreement — an "is the frame nearly
+    down" indicator, not a timer.  A missing, unparseable, already-elapsed or
+    implausibly distant value returns None instead of a number that would
+    read as authoritative: past the cap the two clocks disagree (or the field
+    is left over from an earlier exposure), and no honest countdown exists.
+
+    A timestamp without a UTC offset — what .NET writes for a local DateTime
+    — is compared against our own local clock, which is right whenever both
+    machines sit in the same timezone and caught by the cap when they don't.
+    """
+    if not cam.get("IsExposing"):
+        return None
+    try:
+        end = datetime.fromisoformat(str(cam.get("ExposureEndTime")))
+    except (TypeError, ValueError):
+        return None
+    left = (end - (now or datetime.now(end.tzinfo))).total_seconds()
+    return left if 0.0 < left <= MAX_COUNTDOWN_S else None
+
+
+def _exposure_phrase(cam):
+    """The status line's exposure clause; empty while the camera is idle."""
+    if not cam.get("IsExposing"):
+        return ""
+    left = _exposure_remaining_s(cam)
+    return f"exposing, {left:.0f} s left" if left is not None else "exposing"
 
 
 def _format_mount_pos(ra_deg, dec_deg, epoch):
@@ -759,6 +796,12 @@ class NinaDialog(tk.Toplevel):
         cam = client.camera_info()
         foc = client.focuser_info()
         cam_s = "camera OK" if cam.get("Connected") else "camera NOT connected"
+        # The countdown moves in poll-sized steps (STATUS_POLL_S): enough to
+        # see a frame coming, and it costs no extra request — the exposure
+        # state rides along in the camera info this line already reads.
+        exposure = _exposure_phrase(cam)
+        if exposure:
+            cam_s = f"{cam_s} ({exposure})"
         foc_s = (f"focuser OK @ {foc.get('Position')}"
                  if foc.get("Connected") else "focuser NOT connected")
         return f"API {v} — {cam_s}, {foc_s}", cam
@@ -1580,6 +1623,53 @@ def _selfcheck():
     assert _sep(_to_j2000(*jnow, "JNOW"), vega) < 1e-3   # …and removed
     assert _to_j2000(*vega, "J2000") == vega         # J2000 untouched
 
+    # Exposure countdown, both timestamp forms NINA can send (local DateTime
+    # without an offset, and one with).  An idle camera, a stale end time, a
+    # clock-skew-sized gap and an unparseable field all decline to guess.
+    from datetime import timedelta, timezone
+    naive_now = datetime(2026, 7, 30, 23, 0, 0)
+    aware_now = naive_now.replace(tzinfo=timezone.utc)
+    for now in (naive_now, aware_now):
+        cam = {"IsExposing": True,
+               "ExposureEndTime": (now + timedelta(seconds=42)).isoformat()}
+        assert abs(_exposure_remaining_s(cam, now) - 42.0) < 1e-6, cam
+        assert _exposure_remaining_s({**cam, "IsExposing": False}, now) is None
+        past = {"IsExposing": True,
+                "ExposureEndTime": (now - timedelta(seconds=1)).isoformat()}
+        assert _exposure_remaining_s(past, now) is None, past
+        skewed = {"IsExposing": True,
+                  "ExposureEndTime": (now + timedelta(hours=2)).isoformat()}
+        assert _exposure_remaining_s(skewed, now) is None, skewed
+    # .NET's 7-digit fraction parses; junk and a missing field do not.
+    ticks = {"IsExposing": True,
+             "ExposureEndTime": "2026-07-30T23:00:42.1234567"}
+    assert abs(_exposure_remaining_s(ticks, naive_now) - 42.123) < 1e-3
+    assert _exposure_remaining_s({"IsExposing": True}) is None
+    assert _exposure_remaining_s({"IsExposing": True,
+                                  "ExposureEndTime": "soon"}) is None
+    # The status clause degrades to "exposing" rather than vanishing when the
+    # end time is unusable, and says nothing at all when the camera is idle.
+    assert _exposure_phrase({"IsExposing": False}) == ""
+    assert _exposure_phrase({"IsExposing": True}) == "exposing"
+    assert _exposure_phrase(
+        {"IsExposing": True,
+         "ExposureEndTime": (datetime.now()
+                             + timedelta(seconds=30.4)).isoformat()}) \
+        == "exposing, 30 s left"
+
+    # …and reaches the status line the poll writes, without a second request.
+    import types
+    stub_client = types.SimpleNamespace(
+        version=lambda: "2.2.13",
+        camera_info=lambda: {
+            "Connected": True, "IsExposing": True,
+            "ExposureEndTime": (datetime.now()
+                                + timedelta(seconds=30.4)).isoformat()},
+        focuser_info=lambda: {"Connected": True, "Position": 12345})
+    text, _cam = NinaDialog._status_line(stub_client)
+    assert text == ("API 2.2.13 — camera OK (exposing, 30 s left), "
+                    "focuser OK @ 12345"), text
+
     # Guider-resume gate: only a connected+guiding guider is resumed.
     assert NinaDialog._guider_active({"Connected": True, "State": "Guiding"})
     assert not NinaDialog._guider_active({"Connected": True, "State": "Stopped"})
@@ -1589,7 +1679,6 @@ def _selfcheck():
     # the same second, or a re-mirror after a NINA history reset, reuses the
     # name.  Only self._q is touched, so a stub stands in for the dialog.
     import tempfile
-    import types
     stub = types.SimpleNamespace(_q=queue.Queue())
     with tempfile.TemporaryDirectory() as d:
         NinaDialog._write_frame(stub, d, "snap.fits", b"first")
